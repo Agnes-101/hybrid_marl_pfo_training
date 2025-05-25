@@ -293,15 +293,13 @@ class HybridTraining:
         self.max_metaheuristic_runs = 1          
         # Create log directory if needed
         if config["logging"]["enabled"]:
-            os.makedirs(config["logging"]["log_dir"], exist_ok=True)         
-        # # Set global environment reference for policy mapping
-        # set_global_env(self.env)
-        
+            os.makedirs(config["logging"]["log_dir"], exist_ok=True)       
+            
         # Initialize algorithm instance as None
         self.algo = None
         
         print("Network topology and policy manager initialized")
-        print("Initial policy distribution:")
+        # print("Initial policy distribution:")
         self.env.log_policy_status()
         # 2) Grab the manager out of the env
         self.manager = self.env.policy_manager
@@ -944,7 +942,7 @@ if __name__ == "__main__":
         # "marl_steps_per_phase": 1,
         # "checkpoint_interval": 10,
         # "checkpoint_dir": "results/checkpoints",
-        "marl_steps_per_phase": 30,
+        "marl_steps_per_phase": 10,
         "max_epochs": 10,
         "checkpoint_interval": 2,
         "checkpointdir": "./checkpoints",

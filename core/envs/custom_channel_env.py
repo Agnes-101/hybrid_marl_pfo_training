@@ -1069,7 +1069,7 @@ class NetworkEnvironment(MultiAgentEnv):
         self.policy_manager = PolicyMappingManager(bs_positions, initial_ue_positions)
         
         print(f"Policy manager initialized with {len(bs_positions)} BSs and {len(initial_ue_positions)} UEs")
-        print("Initial policy distribution:")
+        # print("Initial policy distribution:")
         self.policy_manager.log_policy_assignments()
         
     def get_policy_for_agent(self, agent_id: str) -> str:
@@ -1389,7 +1389,7 @@ class NetworkEnvironment(MultiAgentEnv):
                 
     def step(self, actions):
         try:
-            print(f"Step called with {len(actions)} actions")
+            # print(f"Step called with {len(actions)} actions")
             start_time = time.time()            
             connected_count = 0
             handover_count = 0
