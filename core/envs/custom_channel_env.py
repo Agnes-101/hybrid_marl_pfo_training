@@ -83,7 +83,7 @@ class PolicyMappingManager:
         return assignments
 class UE:
     def __init__(self, id, position, demand,
-                v_min=0.5, v_max=1.5,
+                v_min=0.1, v_max=0.6,
                 pause_min=1.0, pause_max=5.0,rx_gain_dbi=0.0,
                 ewma_alpha=0.7):
         self.id          = int(id)
@@ -180,7 +180,7 @@ class BaseStation:
         # print(f"BS with reuse Colour: {reuse_color},RB Bandwidth: {self.rb_bandwidth}, No. Num_rbs:{self.num_rbs}")
         self.seed = 42
         if self.seed is not None:
-            np.random.seed(self.seed)
+            np.random.seed(self.seed+self.id)
         
         self.rb_allocation = {}  # Dictionary mapping UE IDs to allocated RBs
         self.rb_sinr = np.zeros(self.num_rbs)  # SINR per RB (for interference modeling)
@@ -816,86 +816,7 @@ class BaseStation:
     
     
 class NetworkEnvironment(MultiAgentEnv):
-    # @staticmethod
-    # def generate_hex_positions(
-    #     num_bs,
-    #     width=100.0,
-    #     height=100.0,
-    #     min_distance_from_center=30.0,  # Minimum distance for small cells
-    #     enforce_center=True
-    # ):
-    #     """
-    #     Generates positions with:
-    #     - Guaranteed central BS at (50,50) when enforce_center=True
-    #     - Other BSs placed in hex pattern ≥ min_distance_from_center away
-    #     """
-    #     center = (width/2, height/2)
-    #     positions = []
-        
-    #     if num_bs < 1:
-    #         return []
-
-    #     # ==================================================================
-    #     # 1. Always place first BS at center (50,50)
-    #     # ==================================================================
-    #     if enforce_center:
-    #         positions.append(center)
-    #         remaining_bs = num_bs - 1
-    #     else:
-    #         remaining_bs = num_bs
-
-    #     # ==================================================================
-    #     # 2. Calculate hexagonal grid parameters for remaining BSs
-    #     # ==================================================================
-    #     if remaining_bs > 0:
-    #         # Effective area excluding central safety zone
-    #         safe_radius = min_distance_from_center
-    #         usable_width = width - 2*safe_radius
-    #         usable_height = height - 2*safe_radius
-            
-    #         area_per_bs = (usable_width * usable_height) / remaining_bs
-    #         pitch = max(math.sqrt(2 * area_per_bs / math.sqrt(3)), 15.0)
-            
-    #         # Generate grid positions offset from center
-    #         hex_height = pitch * math.sin(math.radians(60))
-    #         n_cols = int(math.ceil(usable_width / pitch)) + 2
-    #         n_rows = int(math.ceil(usable_height / hex_height)) + 2
-            
-    #         x_start = safe_radius
-    #         y_start = safe_radius
-            
-    #         # ==============================================================
-    #         # 3. Generate candidate positions (all outside safe radius)
-    #         # ==============================================================
-    #         candidate_pos = []
-    #         for row in range(n_rows):
-    #             y = y_start + row * hex_height
-    #             x_offset = (pitch/2 if row % 2 else 0)
-                
-    #             for col in range(n_cols):
-    #                 x = x_start + x_offset + col * pitch
-    #                 candidate = (x, y)
-                    
-    #                 # Check position validity
-    #                 if (0 <= x <= width) and (0 <= y <= height):
-    #                     dist_to_center = np.hypot(x-center[0], y-center[1])
-    #                     if dist_to_center >= min_distance_from_center:
-    #                         candidate_pos.append(candidate)
-
-    #         # ==============================================================
-    #         # 4. Sort candidates by distance from center (spiral pattern)
-    #         # ==============================================================
-    #         candidate_pos.sort(
-    #             key=lambda p: (
-    #                 np.hypot(p[0]-center[0], p[1]-center[1]),  # Distance
-    #                 -np.arctan2(p[1]-center[1], p[0]-center[0]) # Angle
-    #             )
-    #         )
-
-    #         # Take first N positions meeting criteria
-    #         positions += candidate_pos[:remaining_bs]
-
-    #     return positions[:num_bs]
+    
     @staticmethod
     def generate_hex_positions(num_bs, width=100.0, height=100.0, min_distance_from_center=30.0,  # Minimum distance for small cells
     enforce_center=True):
@@ -1190,7 +1111,22 @@ class NetworkEnvironment(MultiAgentEnv):
             # 3) Load factor (PRB utilization)
             bs = self.base_stations[ue.associated_bs]
             prb_util = bs.load / (bs.num_rbs + 1e-9)  # ∈ [0,1]
-            load_factor = 1.0 - prb_util           # ∈ [0,1]
+            
+            # load_factor = 1.0 - prb_util           # ∈ [0,1]
+            
+            optimal_util = 0.8  # Target 80% utilization
+            if prb_util <= optimal_util:
+                load_factor = prb_util / optimal_util  # Reward up to optimal
+            else:
+                # Penalize overload progressively
+                overload_ratio = prb_util / optimal_util
+                load_factor = max(0.0, 2.0 - overload_ratio)
+            
+            # 4) Handover penalty
+            handover_penalty = 0.0
+            if hasattr(ue, 'prev_associated_bs'):
+                if ue.prev_associated_bs != ue.associated_bs:
+                    handover_penalty = 0.1
 
             # 4) Composite reward
             #    weight SINR high if you care throughput, weight load high if you care fairness
@@ -1281,25 +1217,37 @@ class NetworkEnvironment(MultiAgentEnv):
         loads_norm = loads_bps / (capacities_bps + 1e-9)
 
         # 5) Jain’s fairness index on normalized loads
-        #    J = (sum x_i)^2 / (N * sum x_i^2)
-        N = len(self.base_stations)
-        sum_loads = loads_norm.sum()
-        fairness = (sum_loads * sum_loads) / (N * (loads_norm * loads_norm).sum() + 1e-6)
-
-        # 6) Overload penalty: sum of (load_norm - 1)+ across BSs
+        # #    J = (sum x_i)^2 / (N * sum x_i^2)
+        # N = len(self.base_stations)
+        # sum_loads = loads_norm.sum()
+        # fairness = (sum_loads * sum_loads) / (N * (loads_norm * loads_norm).sum() + 1e-6)
+        
+        # Option 3: Load Balance Variance (simpler alternative)
+        # Penalize high variance in utilization rates
+        load_variance = torch.var(loads_norm)
+        balance_score = 1.0 / (1.0 + load_variance)  # Higher is better        
+        # 4) Overload penalty
         overload = torch.relu(loads_norm - 1.0).sum()
-        # for i, bs in enumerate(self.base_stations):
-        #     load = sum(bs.allocated_resources.values())
-        #     capacity = bs.capacity * 1e6
-        #     print(f"BS {bs.id}: Load={load/1e6:.2f}Mbps, Capacity={capacity/1e6:.2f}Mbps, Ratio={load/capacity:.2f}")
-        # 7) Composite reward
-        #    - throughput in Gbps (≈ 0–X)
-        #    - fairness [0–1]
-        #    - overload penalty (unitless)
+        
+        # 5) Connection ratio bonus
+        connected_ues = sum(1 for ue in self.ues if ue.associated_bs is not None)
+        connection_ratio = connected_ues / len(self.ues)
+        
+        # 6) Normalize throughput
+        max_expected_throughput = 10.0
+        throughput_normalized = min(throughput_gbps / max_expected_throughput, 1.0)
+        
+        # reward = (
+        #     1.0 * throughput_gbps   # reward raw capacity in Gbps
+        #     + 2.0 * fairness        # weight fairness
+        #     - 1.0 * overload        # penalize overloaded cells
+        # )
+        
         reward = (
-            1.0 * throughput_gbps   # reward raw capacity in Gbps
-            + 2.0 * fairness        # weight fairness
-            - 1.0 * overload        # penalize overloaded cells
+            2.0 * throughput_normalized +
+            2.0 * balance_score +
+            1.0 * connection_ratio -
+            3.0 * overload
         )
         return reward
 
@@ -1438,6 +1386,7 @@ class NetworkEnvironment(MultiAgentEnv):
                 ue.sinr = sinrs[ue.associated_bs]
             else:
                 ue.sinr = -np.inf
+                
     def step(self, actions):
         try:
             print(f"Step called with {len(actions)} actions")
@@ -1944,7 +1893,13 @@ class NetworkEnvironment(MultiAgentEnv):
         fitness     = self.calculate_reward()          # global reward
         avg_sinr    = np.mean([ue.sinr for ue in ue_iter])
         avg_sinr_db = 10 * np.log10(avg_sinr)
-        fairness    = (throughputs.sum()**2) / (len(throughputs) * np.sum(throughputs**2) + 1e-9)
+        
+        # fairness    = (throughputs.sum()**2) / (len(throughputs) * np.sum(throughputs**2) + 1e-9)
+        
+        # Option 3: Simple Throughput Variance (like your BS load variance)        
+        throughput_variance = np.var(throughputs_Gbps)
+        fairness = 1.0 / (1.0 + throughput_variance)
+        
         load_var    = np.var([bs.load for bs in self.base_stations])
         bs_loads    = [bs.load for bs in self.base_stations]
         
