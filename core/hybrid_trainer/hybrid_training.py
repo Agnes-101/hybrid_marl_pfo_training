@@ -391,7 +391,8 @@ class HybridTraining:
             .environment("NetworkEnv", env_config=env_config)
             .env_runners(
                 rollout_fragment_length=20,  # Increased from 10 for better experience collection
-                num_env_runners=8,  # More parallel environments
+                fragment_length_unit="agent_steps",
+                num_env_runners=4,  # More parallel environments
                 sample_timeout_s=3600
                 )
     
@@ -410,18 +411,13 @@ class HybridTraining:
                 # lr_schedule=[(0, 5e-5), (1000, 1e-4), (10000, 5e-4)],
                 entropy_coeff=0.02, #0.01,
                 kl_coeff=0.2,
-                train_batch_size=12000,# 4000,
-                sgd_minibatch_size=512, # 128,
+                train_batch_size=800,# 4000,
+                sgd_minibatch_size=128, # 128,
                 num_sgd_iter=15, # 10,
                 clip_param=0.2
             )
             .multi_agent(
-                policies=policies, # {
-                #     "bs_0_policy": (None, self.obs_space["ue0"], self.act_space["ue0"], {}),  # Macro
-                #     "bs_1_policy": (None, self.obs_space["ue0"], self.act_space["ue0"], {}),  # Small cell 1
-                #     "bs_2_policy": (None, self.obs_space["ue0"], self.act_space["ue0"], {}),  # Small cell 2
-                #     "bs_3_policy": (None, self.obs_space["ue0"], self.act_space["ue0"], {}),  # Small cell 3
-                # },
+                policies=policies, 
                 policy_mapping_fn=self.policy_mapping_fn,
             )
         )
