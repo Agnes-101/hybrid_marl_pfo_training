@@ -415,8 +415,7 @@ class HybridTraining:
                 sgd_minibatch_size=60, # 64 for 60
                 num_sgd_iter=15, # 8 for 60
                 clip_param=0.15, # 0.15 for 60
-                kl_coeff="adaptive",
-                normalize_advantages=True,
+                kl_coeff="adaptive"
             )
             .multi_agent(
                 policies=policies, 
