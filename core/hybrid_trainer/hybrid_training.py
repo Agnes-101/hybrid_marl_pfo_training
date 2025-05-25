@@ -389,14 +389,13 @@ class HybridTraining:
         marl_config = (
             PPOConfig()
             .environment("NetworkEnv", env_config=env_config)
+            # Total rollout size per iteration =rollout_fragment_length × num_env_runners × num_envs_per_env_runner
             .env_runners(
-                rollout_fragment_length=20,  # Increased from 10 for better experience collection              
-                num_env_runners=4,  # More parallel environments
+                rollout_fragment_length=10,  # Increased from 10 for better experience collection              
+                num_env_runners=1,  # Quad core machine, 1 or 2
                 sample_timeout_s=3600
-                )
-            .rollouts(
-                fragment_length_unit="agent_steps"
-            )
+                ) 
+                     
             .training(
                 model={
                     "custom_model": "meta_policy",
@@ -407,15 +406,17 @@ class HybridTraining:
                     }
                 },
                 gamma=0.99,
-                lr=3e-4, # 5e-4,
+                lr=1e-4, # 1e-4 for 60
                 lr_schedule=[(0, 1e-4), (5000, 3e-4), (20000, 1e-4)], 
                 # lr_schedule=[(0, 5e-5), (1000, 1e-4), (10000, 5e-4)],
                 entropy_coeff=0.02, #0.01,
-                kl_coeff=0.2,
-                train_batch_size=800,# 4000,
-                sgd_minibatch_size=128, # 128,
-                num_sgd_iter=15, # 10,
-                clip_param=0.2
+                # kl_coeff=0.2,
+                train_batch_size=360, # 360 for 60
+                sgd_minibatch_size=60, # 64 for 60
+                num_sgd_iter=15, # 8 for 60
+                clip_param=0.15, # 0.15 for 60
+                kl_coeff="adaptive",
+                normalize_advantages=True,
             )
             .multi_agent(
                 policies=policies, 
