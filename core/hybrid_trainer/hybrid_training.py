@@ -389,9 +389,9 @@ class HybridTraining:
         marl_config = (
             PPOConfig()
             .environment("NetworkEnv", env_config=env_config)
-            # Total rollout size per iteration =rollout_fragment_length × num_env_runners × num_envs_per_env_runner
+            # Total rollout size per iteration =rollout_fragment_length × num_env_runners 
             .env_runners(
-                rollout_fragment_length=10,  # Increased from 10 for better experience collection              
+                rollout_fragment_length=20,  # Increased from 10 for better experience collection              
                 num_env_runners=1,  # Quad core machine, 1 or 2
                 sample_timeout_s=3600
                 ) 
@@ -411,8 +411,8 @@ class HybridTraining:
                 # lr_schedule=[(0, 5e-5), (1000, 1e-4), (10000, 5e-4)],
                 entropy_coeff=0.02, #0.01,
                 kl_coeff=0.2,
-                train_batch_size=360, # 360 for 60
-                sgd_minibatch_size=60, # 64 for 60
+                train_batch_size_per_learner=2000, #  for 60
+                sgd_minibatch_size=128, # for 60
                 num_sgd_iter=15, # 8 for 60
                 clip_param=0.15, # 0.15 for 60
                 
