@@ -410,12 +410,12 @@ class HybridTraining:
                 lr_schedule=[(0, 1e-4), (5000, 3e-4), (20000, 1e-4)], 
                 # lr_schedule=[(0, 5e-5), (1000, 1e-4), (10000, 5e-4)],
                 entropy_coeff=0.02, #0.01,
-                # kl_coeff=0.2,
+                kl_coeff=0.2,
                 train_batch_size=360, # 360 for 60
                 sgd_minibatch_size=60, # 64 for 60
                 num_sgd_iter=15, # 8 for 60
                 clip_param=0.15, # 0.15 for 60
-                kl_coeff="adaptive"
+                
             )
             .multi_agent(
                 policies=policies, 
