@@ -390,7 +390,7 @@ class HybridTraining:
             PPOConfig()
             .environment("NetworkEnv", env_config=env_config)
             .env_runners(
-                rollout_fragment_length=50,  # Increased from 10 for better experience collection
+                rollout_fragment_length=20,  # Increased from 10 for better experience collection
                 num_env_runners=8,  # More parallel environments
                 sample_timeout_s=3600
                 )
