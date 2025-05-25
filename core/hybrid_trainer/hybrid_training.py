@@ -390,12 +390,13 @@ class HybridTraining:
             PPOConfig()
             .environment("NetworkEnv", env_config=env_config)
             .env_runners(
-                rollout_fragment_length=20,  # Increased from 10 for better experience collection
-                fragment_length_unit="agent_steps",
+                rollout_fragment_length=20,  # Increased from 10 for better experience collection              
                 num_env_runners=4,  # More parallel environments
                 sample_timeout_s=3600
                 )
-    
+            .rollouts(
+                fragment_length_unit="agent_steps"
+            )
             .training(
                 model={
                     "custom_model": "meta_policy",
