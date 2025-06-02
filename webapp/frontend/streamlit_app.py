@@ -1022,12 +1022,10 @@ if run:
                 refresh_placeholder = st.empty()
                 refresh_placeholder.markdown(f"Last update: {time.time():.0f}")
                 time.sleep(0.5)  # Give UI time to update without consuming too much CPU
-                
     elif mode == "Wilcoxon Test":
-        st.header("Statistical Algorithm Comparison")
+        st.header("Statistical Algorithm Comparison")       
         
         # Configure test parameters
-        # iterations = st.slider("Iterations per run", 10, 100, 30)
         n_seeds = st.slider("Number of seeds (samples)", 2, 30, 10)
         
         # Choose baseline algorithm (default to PFO)
@@ -1050,12 +1048,17 @@ if run:
                             if algo != baseline_algo]
             st.info(f"Comparing {baseline_algo.upper()} against {len(comparison_algos)} algorithms")
         
-        # Choose KPI to compare
-        kpi_to_compare = st.selectbox(
-            "KPI to Compare", 
-            ["fitness", "average_sinr", "fairness", "energy_efficiency", "spectral_efficiency", "coverage", "load_balance", "handover_rate"],
-            index=0
+        # Choose KPIs to compare - now multi-select
+        kpis_to_compare = st.multiselect(
+            "KPIs to Compare", 
+            all_kpis,
+            default=["fitness", "average_sinr", "fairness"]  # Default selection
         )
+        
+        # Add option to compare all KPIs
+        if st.checkbox("Compare All KPIs", value=False):
+            kpis_to_compare = all_kpis
+            st.info(f"Comparing {len(kpis_to_compare)} KPIs")
         
         # Select scenario
         scenario_name = st.selectbox("Scenario", list(SCENARIOS.keys()), key="wilcoxon_scenario")
@@ -1068,12 +1071,18 @@ if run:
         
         # Run button
         if st.button("Run Wilcoxon Test"):
+            if not kpis_to_compare:
+                st.error("Please select at least one KPI to compare.")
+                # return
+            
+            if not comparison_algos:
+                st.error("Please select at least one algorithm to compare against the baseline.")
+                # return
+            
             # Import required packages
             from scipy import stats
             import numpy as np
             import pandas as pd
-            import matplotlib.pyplot as plt
-            import seaborn as sns
             
             # Create progress indicators
             progress_bar = st.progress(0)
@@ -1083,7 +1092,7 @@ if run:
             total_runs = (len(comparison_algos) + 1) * n_seeds  # +1 for baseline
             completed_runs = 0
             
-            # Dictionary to store results
+            # Dictionary to store results for all KPIs
             all_results = {baseline_algo: []}
             for algo in comparison_algos:
                 all_results[algo] = []
@@ -1099,7 +1108,7 @@ if run:
                 np.random.seed(seed)
                 
                 # Create environment and tracker
-                env = NetworkEnvironment({"num_ue": selected_ue, "num_bs": selected_bs})
+                env = NetworkEnvironment({"num_ue": selected_ue, "num_bs": selected_bs}, seed = seed)
                 tracker = KPITracker()
                 
                 # Run algorithm
@@ -1112,18 +1121,21 @@ if run:
                     iterations=iterations
                 )
                 
-                # Extract the KPI value for this run
-                kpi_value = result["metrics"].get(kpi_to_compare, 0)
-                if kpi_value is None:
-                    kpi_value = 0
-                
-                # Store result
-                all_results[baseline_algo].append({
+                # Store results for all KPIs
+                result_dict = {
                     "algorithm": baseline_algo.upper(),
                     "seed": seed,
-                    "kpi_value": kpi_value,
                     "cpu_time": result["metrics"].get("cpu_time", 0)
-                })
+                }
+                
+                # Add all KPI values
+                for kpi in all_kpis:
+                    kpi_value = result["metrics"].get(kpi, 0)
+                    if kpi_value is None:
+                        kpi_value = 0
+                    result_dict[kpi] = kpi_value
+                
+                all_results[baseline_algo].append(result_dict)
                 
                 # Update progress
                 completed_runs += 1
@@ -1152,18 +1164,21 @@ if run:
                         iterations=iterations
                     )
                     
-                    # Extract the KPI value for this run
-                    kpi_value = result["metrics"].get(kpi_to_compare, 0)
-                    if kpi_value is None:
-                        kpi_value = 0
-                    
-                    # Store result
-                    all_results[algo].append({
+                    # Store results for all KPIs
+                    result_dict = {
                         "algorithm": algo.upper(),
                         "seed": seed,
-                        "kpi_value": kpi_value,
                         "cpu_time": result["metrics"].get("cpu_time", 0)
-                    })
+                    }
+                    
+                    # Add all KPI values
+                    for kpi in all_kpis:
+                        kpi_value = result["metrics"].get(kpi, 0)
+                        if kpi_value is None:
+                            kpi_value = 0
+                        result_dict[kpi] = kpi_value
+                    
+                    all_results[algo].append(result_dict)
                     
                     # Update progress
                     completed_runs += 1
@@ -1176,374 +1191,806 @@ if run:
             
             results_df = pd.DataFrame(records)
             
-            # Display raw results if requested
-            if st.checkbox("Show raw results", value=False):
-                st.dataframe(results_df)
+            # Process results for each KPI
+            all_wilcoxon_results = []
+            all_summary_stats = []
             
-            # Perform Wilcoxon signed-rank test for each algorithm against baseline
-            st.subheader(f"Wilcoxon Signed-Rank Test Results (vs. {baseline_algo.upper()})")
-            
-            wilcoxon_results = []
-            baseline_values = np.array([r["kpi_value"] for r in all_results[baseline_algo]])
-            
-            for algo in comparison_algos:
-                algo_values = np.array([r["kpi_value"] for r in all_results[algo]])
+            for kpi_to_compare in kpis_to_compare:
+                st.subheader(f"Results for {kpi_to_compare.replace('_', ' ').title()}")
                 
-                # Perform Wilcoxon test
-                w_stat, p_value = stats.wilcoxon(baseline_values, algo_values)
+                # Perform Wilcoxon signed-rank test for each algorithm against baseline
+                baseline_values = np.array([r[kpi_to_compare] for r in all_results[baseline_algo]])
                 
-                # Calculate effect size - Cliff's Delta is a good non-parametric effect size
-                # (simplified calculation here)
-                mean_diff = np.mean(algo_values) - np.mean(baseline_values)
-                pooled_std = np.sqrt((np.std(baseline_values)**2 + np.std(algo_values)**2) / 2)
-                effect_size = mean_diff / pooled_std if pooled_std != 0 else 0
+                kpi_wilcoxon_results = []
                 
-                # Determine significance level
-                if p_value < 0.01:
-                    sig_level = "*** (p<0.01)"
-                elif p_value < 0.05:
-                    sig_level = "** (p<0.05)"
-                elif p_value < 0.1:
-                    sig_level = "* (p<0.1)"
-                else:
-                    sig_level = "ns"
-                
-                # Determine which algorithm is better
-                baseline_mean = np.mean(baseline_values)
-                algo_mean = np.mean(algo_values)
-                
-                # For fairness and most KPIs, higher is better, but note this might need adjustment
-                # for KPIs where lower is better
-                comparison = "better" if algo_mean > baseline_mean else "worse"
-                if abs(algo_mean - baseline_mean) / max(baseline_mean, 1e-10) < 0.01:  # 1% threshold
-                    comparison = "similar"
+                for algo in comparison_algos:
+                    algo_values = np.array([r[kpi_to_compare] for r in all_results[algo]])
                     
-                # Add to results
-                wilcoxon_results.append({
-                    "Algorithm": algo.upper(),
-                    "vs. Baseline": baseline_algo.upper(),
-                    "Mean Difference": algo_mean - baseline_mean,
-                    "% Difference": ((algo_mean - baseline_mean) / max(baseline_mean, 1e-10)) * 100,
-                    "p-value": p_value,
-                    "Significance": sig_level,
-                    "Effect Size": effect_size,
-                    "Comparison": comparison
-                })
-            
-            # Create and display Wilcoxon test results table
-            wilcoxon_df = pd.DataFrame(wilcoxon_results)
-            st.dataframe(wilcoxon_df)
-            
-            # Create summary visualization
-            st.subheader(f"Statistical Comparison for {kpi_to_compare.replace('_', ' ').title()}")
-            
-            # Boxplot comparison
-            fig, ax = plt.subplots(figsize=(12, 6))
-            
-            # Prepare data for boxplot
-            box_data = []
-            box_labels = []
-            
-            # Always put baseline first
-            box_data.append([r["kpi_value"] for r in all_results[baseline_algo]])
-            box_labels.append(f"{baseline_algo.upper()} (Baseline)")
-            
-            for algo in comparison_algos:
-                box_data.append([r["kpi_value"] for r in all_results[algo]])
-                box_labels.append(algo.upper())
-            
-            # Create boxplot
-            bp = ax.boxplot(box_data, patch_artist=True, labels=box_labels)
-            
-            # Color the baseline differently
-            for i, box in enumerate(bp['boxes']):
-                if i == 0:  # Baseline
-                    box.set(facecolor='lightblue')
-                else:
-                    # Color based on significance
-                    if wilcoxon_results[i-1]["p-value"] < 0.05:
-                        if wilcoxon_results[i-1]["Comparison"] == "better":
-                            box.set(facecolor='lightgreen')
-                        elif wilcoxon_results[i-1]["Comparison"] == "worse":
-                            box.set(facecolor='lightcoral')
+                    # Perform Wilcoxon test
+                    try:
+                        w_stat, p_value = stats.wilcoxon(baseline_values, algo_values)
+                    except ValueError:
+                        # Handle case where all values are identical
+                        w_stat, p_value = 0, 1.0
+                    
+                    # Calculate comprehensive statistics
+                    baseline_mean = np.mean(baseline_values)
+                    algo_mean = np.mean(algo_values)
+                    baseline_median = np.median(baseline_values)
+                    algo_median = np.median(algo_values)
+                    baseline_std = np.std(baseline_values, ddof=1)
+                    algo_std = np.std(algo_values, ddof=1)
+                    
+                    # Effect size calculations
+                    mean_diff = algo_mean - baseline_mean
+                    median_diff = algo_median - baseline_median
+                    pooled_std = np.sqrt((baseline_std**2 + algo_std**2) / 2)
+                    cohens_d = mean_diff / pooled_std if pooled_std != 0 else 0
+                    
+                    # Cliff's Delta (non-parametric effect size)
+                    def cliffs_delta(x, y):
+                        """Calculate Cliff's Delta effect size"""
+                        n1, n2 = len(x), len(y)
+                        delta = 0
+                        for i in range(n1):
+                            for j in range(n2):
+                                if x[i] > y[j]:
+                                    delta += 1
+                                elif x[i] < y[j]:
+                                    delta -= 1
+                        return delta / (n1 * n2)
+                    
+                    cliffs_d = cliffs_delta(algo_values, baseline_values)
+                    
+                    # Variance ratio (F-test equivalent)
+                    variance_ratio = algo_std**2 / baseline_std**2 if baseline_std != 0 else 1
+                    
+                    # Mann-Whitney U test (alternative non-parametric test)
+                    try:
+                        u_stat, u_p_value = stats.mannwhitneyu(baseline_values, algo_values, alternative='two-sided')
+                    except ValueError:
+                        u_stat, u_p_value = 0, 1.0
+                    
+                    # Percentile comparisons
+                    percentile_25_diff = np.percentile(algo_values, 25) - np.percentile(baseline_values, 25)
+                    percentile_75_diff = np.percentile(algo_values, 75) - np.percentile(baseline_values, 75)
+                    
+                    # Determine significance level
+                    if p_value < 0.001:
+                        sig_level = "*** (p<0.001)"
+                    elif p_value < 0.01:
+                        sig_level = "** (p<0.01)"
+                    elif p_value < 0.05:
+                        sig_level = "* (p<0.05)"
+                    elif p_value < 0.1:
+                        sig_level = ". (p<0.1)"
+                    else:
+                        sig_level = "ns"
+                    
+                    # Determine which algorithm is better
+                    comparison = "better" if algo_mean > baseline_mean else "worse"
+                    if abs(algo_mean - baseline_mean) / max(abs(baseline_mean), 1e-10) < 0.01:  # 1% threshold
+                        comparison = "similar"
+                    
+                    # Effect size interpretation
+                    def interpret_cohens_d(d):
+                        abs_d = abs(d)
+                        if abs_d < 0.2:
+                            return "negligible"
+                        elif abs_d < 0.5:
+                            return "small"
+                        elif abs_d < 0.8:
+                            return "medium"
                         else:
-                            box.set(facecolor='lightyellow')
-                    else:
-                        box.set(facecolor='lightyellow')
-            
-            # Add title and labels
-            ax.set_title(f'Distribution of {kpi_to_compare.replace("_", " ").title()} Values')
-            ax.set_ylabel(kpi_to_compare.replace('_', ' ').title())
-            ax.set_xlabel('Algorithm')
-            
-            # Rotate x-axis labels for better readability
-            plt.xticks(rotation=45, ha='right')
-            
-            # Add a legend
-            from matplotlib.patches import Patch
-            legend_elements = [
-                Patch(facecolor='lightblue', label='Baseline'),
-                Patch(facecolor='lightgreen', label='Significantly Better (p<0.05)'),
-                Patch(facecolor='lightcoral', label='Significantly Worse (p<0.05)'),
-                Patch(facecolor='lightyellow', label='No Significant Difference')
-            ]
-            ax.legend(handles=legend_elements, loc='upper right')
-            
-            # Add grid for easier reading
-            ax.grid(True, linestyle='--', alpha=0.7)
-            
-            fig.tight_layout()
-            st.pyplot(fig)
-            
-            # Create bar chart showing mean values with error bars (95% CI)
-            st.subheader(f"Mean {kpi_to_compare.replace('_', ' ').title()} Comparison")
-            
-            # Calculate means and confidence intervals
-            means = []
-            ci_low = []
-            ci_high = []
-            labels = []
-            
-            # Always put baseline first
-            baseline_data = np.array([r["kpi_value"] for r in all_results[baseline_algo]])
-            means.append(np.mean(baseline_data))
-            # 95% CI using t-distribution
-            sem = stats.sem(baseline_data)
-            ci = sem * stats.t.ppf((1 + 0.95) / 2, len(baseline_data) - 1)
-            ci_low.append(means[0] - ci)
-            ci_high.append(means[0] + ci)
-            labels.append(f"{baseline_algo.upper()} (Baseline)")
-            
-            for algo in comparison_algos:
-                algo_data = np.array([r["kpi_value"] for r in all_results[algo]])
-                means.append(np.mean(algo_data))
-                sem = stats.sem(algo_data)
-                ci = sem * stats.t.ppf((1 + 0.95) / 2, len(algo_data) - 1)
-                ci_low.append(means[-1] - ci)
-                ci_high.append(means[-1] + ci)
-                labels.append(algo.upper())
-            
-            # Create bar chart
-            fig, ax = plt.subplots(figsize=(12, 6))
-            
-            # Plot bars
-            x = np.arange(len(labels))
-            bars = ax.bar(x, means, yerr=np.array([np.array(means) - np.array(ci_low), 
-                                                np.array(ci_high) - np.array(means)]),
-                        capsize=5, alpha=0.7)
-            
-            # Color bars based on statistical significance
-            bars[0].set_color('lightblue')  # Baseline
-            
-            for i in range(1, len(bars)):
-                if wilcoxon_results[i-1]["p-value"] < 0.05:
-                    if wilcoxon_results[i-1]["Comparison"] == "better":
-                        bars[i].set_color('lightgreen')
-                    elif wilcoxon_results[i-1]["Comparison"] == "worse":
-                        bars[i].set_color('lightcoral')
-                    else:
-                        bars[i].set_color('lightyellow')
-                else:
-                    bars[i].set_color('lightyellow')
-            
-            # Add labels and title
-            ax.set_ylabel(kpi_to_compare.replace('_', ' ').title())
-            ax.set_title(f'Mean {kpi_to_compare.replace("_", " ").title()} with 95% Confidence Intervals')
-            ax.set_xticks(x)
-            ax.set_xticklabels(labels, rotation=45, ha='right')
-            
-            # Add significance markers
-            for i in range(1, len(bars)):
-                if wilcoxon_results[i-1]["p-value"] < 0.01:
-                    marker = "***"
-                elif wilcoxon_results[i-1]["p-value"] < 0.05:
-                    marker = "**"
-                elif wilcoxon_results[i-1]["p-value"] < 0.1:
-                    marker = "*"
-                else:
-                    marker = ""
+                            return "large"
                     
-                if marker:
-                    height = max(means[i], means[0]) * 1.05
-                    ax.text(x[i], height, marker, ha='center', va='bottom', fontsize=12)
-            
-            # Add a legend
-            legend_elements = [
-                Patch(facecolor='lightblue', label='Baseline'),
-                Patch(facecolor='lightgreen', label='Significantly Better (p<0.05)'),
-                Patch(facecolor='lightcoral', label='Significantly Worse (p<0.05)'),
-                Patch(facecolor='lightyellow', label='No Significant Difference')
-            ]
-            ax.legend(handles=legend_elements, loc='upper right')
-            
-            # Add significance legend
-            ax.text(0.98, 0.02, "*** p<0.01, ** p<0.05, * p<0.1", 
-                    transform=ax.transAxes, ha='right', va='bottom', fontsize=10)
-            
-            # Add grid
-            ax.grid(True, linestyle='--', alpha=0.3, axis='y')
-            
-            fig.tight_layout()
-            st.pyplot(fig)
-            
-            # Create convergence plot to compare performance over iterations
-            st.subheader("Convergence Behavior Analysis")
-            
-            # First, rerun algorithms to track convergence
-            convergence_data = {algo: [] for algo in [baseline_algo] + comparison_algos}
-            
-            # Select a single seed for convergence analysis
-            convergence_seed = n_seeds // 2  # Middle seed
-            
-            # Create placeholder for convergence plot
-            convergence_plot = st.empty()
-            
-            # Run baseline and comparison algos and track convergence
-            for algo in [baseline_algo] + comparison_algos:
-                # Set random seed
-                np.random.seed(convergence_seed)
+                    def interpret_cliffs_delta(d):
+                        abs_d = abs(d)
+                        if abs_d < 0.147:
+                            return "negligible"
+                        elif abs_d < 0.33:
+                            return "small"
+                        elif abs_d < 0.474:
+                            return "medium"
+                        else:
+                            return "large"
+                    
+                    # Add to results
+                    kpi_result = {
+                        "KPI": kpi_to_compare,
+                        "Algorithm": algo.upper(),
+                        "vs_Baseline": baseline_algo.upper(),
+                        
+                        # Basic statistics
+                        "Baseline_Mean": baseline_mean,
+                        "Algorithm_Mean": algo_mean,
+                        "Mean_Difference": mean_diff,
+                        "Mean_Percent_Change": ((algo_mean - baseline_mean) / max(abs(baseline_mean), 1e-10)) * 100,
+                        
+                        "Baseline_Median": baseline_median,
+                        "Algorithm_Median": algo_median,
+                        "Median_Difference": median_diff,
+                        "Median_Percent_Change": ((algo_median - baseline_median) / max(abs(baseline_median), 1e-10)) * 100,
+                        
+                        "Baseline_Std": baseline_std,
+                        "Algorithm_Std": algo_std,
+                        "Std_Difference": algo_std - baseline_std,
+                        "Variance_Ratio": variance_ratio,
+                        
+                        # Range and percentiles
+                        "Baseline_Min": np.min(baseline_values),
+                        "Algorithm_Min": np.min(algo_values),
+                        "Baseline_Max": np.max(baseline_values),
+                        "Algorithm_Max": np.max(algo_values),
+                        "Baseline_Range": np.max(baseline_values) - np.min(baseline_values),
+                        "Algorithm_Range": np.max(algo_values) - np.min(algo_values),
+                        
+                        "Q1_Difference": percentile_25_diff,
+                        "Q3_Difference": percentile_75_diff,
+                        "IQR_Baseline": np.percentile(baseline_values, 75) - np.percentile(baseline_values, 25),
+                        "IQR_Algorithm": np.percentile(algo_values, 75) - np.percentile(algo_values, 25),
+                        
+                        # Statistical tests
+                        "Wilcoxon_Statistic": w_stat,
+                        "Wilcoxon_p_value": p_value,
+                        "Wilcoxon_Significance": sig_level,
+                        "MannWhitney_U": u_stat,
+                        "MannWhitney_p_value": u_p_value,
+                        
+                        # Effect sizes
+                        "Cohens_D": cohens_d,
+                        "Cohens_D_Interpretation": interpret_cohens_d(cohens_d),
+                        "Cliffs_Delta": cliffs_d,
+                        "Cliffs_Delta_Interpretation": interpret_cliffs_delta(cliffs_d),
+                        
+                        # Overall comparison
+                        "Performance_Comparison": comparison,
+                        
+                        # Additional metrics
+                        "Coefficient_of_Variation_Baseline": (baseline_std / abs(baseline_mean)) * 100 if baseline_mean != 0 else 0,
+                        "Coefficient_of_Variation_Algorithm": (algo_std / abs(algo_mean)) * 100 if algo_mean != 0 else 0,
+                    }
+                    
+                    kpi_wilcoxon_results.append(kpi_result)
+                    all_wilcoxon_results.append(kpi_result)
                 
-                # Create environment
-                env = NetworkEnvironment({"num_ue": selected_ue, "num_bs": selected_bs})
+                # Display KPI-specific results
+                kpi_df = pd.DataFrame(kpi_wilcoxon_results)
                 
-                # Create tracker that will record history
-                tracker = KPITracker()
+                # Display simplified summary table for this KPI
+                summary_cols = [
+                    "Algorithm", "Mean_Difference", "Mean_Percent_Change", 
+                    "Median_Difference", "Wilcoxon_p_value", "Wilcoxon_Significance",
+                    "Cohens_D", "Cliffs_Delta", "Performance_Comparison"
+                ]
+                st.dataframe(kpi_df[summary_cols])
                 
-                # Run algorithm with the tracker
-                result = run_metaheuristic(
-                    env=env,
-                    algorithm=algo,
-                    epoch=iterations,
-                    kpi_logger=tracker,
-                    visualize_callback=None,
-                    iterations=iterations
-                )
-                
-                # Store convergence data
-                if kpi_to_compare in tracker.history:
-                    convergence_data[algo] = tracker.history[kpi_to_compare].tolist()
-                else:
-                    # If KPI not in history, create a flat line with the final value
-                    convergence_data[algo] = [result["metrics"].get(kpi_to_compare, 0)] * iterations
+                # Add summary statistics for this KPI
+                kpi_summary = {
+                    "KPI": kpi_to_compare,
+                    "Baseline_Algorithm": baseline_algo.upper(),
+                    "Baseline_Mean": baseline_mean,
+                    "Baseline_Median": baseline_median,
+                    "Baseline_Std": baseline_std,
+                    "Baseline_CV": (baseline_std / abs(baseline_mean)) * 100 if baseline_mean != 0 else 0,
+                    "Num_Better_Algorithms": sum(1 for r in kpi_wilcoxon_results if r["Performance_Comparison"] == "better"),
+                    "Num_Worse_Algorithms": sum(1 for r in kpi_wilcoxon_results if r["Performance_Comparison"] == "worse"),
+                    "Num_Similar_Algorithms": sum(1 for r in kpi_wilcoxon_results if r["Performance_Comparison"] == "similar"),
+                    "Num_Significant_Differences": sum(1 for r in kpi_wilcoxon_results if r["Wilcoxon_p_value"] < 0.05),
+                    "Best_Performing_Algorithm": max(kpi_wilcoxon_results, key=lambda x: x["Algorithm_Mean"])["Algorithm"] if kpi_wilcoxon_results else "N/A",
+                    "Worst_Performing_Algorithm": min(kpi_wilcoxon_results, key=lambda x: x["Algorithm_Mean"])["Algorithm"] if kpi_wilcoxon_results else "N/A"
+                }
+                all_summary_stats.append(kpi_summary)
             
-            # Create convergence plot
-            fig, ax = plt.subplots(figsize=(12, 6))
-            
-            # Plot line for baseline
-            ax.plot(range(1, len(convergence_data[baseline_algo])+1), 
-                    convergence_data[baseline_algo], 
-                    label=f"{baseline_algo.upper()} (Baseline)",
-                    linewidth=3, color='blue')
-            
-            # Plot lines for comparison algorithms
-            colors = plt.cm.tab10.colors
-            for i, algo in enumerate(comparison_algos):
-                ax.plot(range(1, len(convergence_data[algo])+1), 
-                        convergence_data[algo],
-                        label=algo.upper(),
-                        linewidth=1.5, color=colors[(i+1) % len(colors)])
-            
-            # Add labels and title
-            ax.set_xlabel('Iteration')
-            ax.set_ylabel(kpi_to_compare.replace('_', ' ').title())
-            ax.set_title(f'Convergence Behavior for {kpi_to_compare.replace("_", " ").title()}')
-            
-            # Add legend
-            ax.legend()
-            
-            # Add grid
-            ax.grid(True, linestyle='--', alpha=0.7)
-            
-            # Display convergence plot
-            convergence_plot.pyplot(fig)
-            
-            # Create summary table
-            st.subheader("Statistical Summary")
-            
-            # Calculate summary statistics
-            summary_data = []
-            
-            # Baseline first
-            baseline_data = np.array([r["kpi_value"] for r in all_results[baseline_algo]])
-            summary_data.append({
-                "Algorithm": f"{baseline_algo.upper()} (Baseline)",
-                "Mean": np.mean(baseline_data),
-                "Median": np.median(baseline_data),
-                "Std Dev": np.std(baseline_data),
-                "Min": np.min(baseline_data),
-                "Max": np.max(baseline_data),
-                "95% CI Lower": np.mean(baseline_data) - stats.sem(baseline_data) * stats.t.ppf((1 + 0.95) / 2, len(baseline_data) - 1),
-                "95% CI Upper": np.mean(baseline_data) + stats.sem(baseline_data) * stats.t.ppf((1 + 0.95) / 2, len(baseline_data) - 1)
-            })
-            
-            # Comparison algorithms
-            for algo in comparison_algos:
-                algo_data = np.array([r["kpi_value"] for r in all_results[algo]])
-                summary_data.append({
-                    "Algorithm": algo.upper(),
-                    "Mean": np.mean(algo_data),
-                    "Median": np.median(algo_data),
-                    "Std Dev": np.std(algo_data),
-                    "Min": np.min(algo_data),
-                    "Max": np.max(algo_data),
-                    "95% CI Lower": np.mean(algo_data) - stats.sem(algo_data) * stats.t.ppf((1 + 0.95) / 2, len(algo_data) - 1),
-                    "95% CI Upper": np.mean(algo_data) + stats.sem(algo_data) * stats.t.ppf((1 + 0.95) / 2, len(algo_data) - 1)
-                })
-            
-            # Display summary table
-            summary_df = pd.DataFrame(summary_data)
+            # Overall summary across all KPIs
+            st.header("Overall Summary Across All KPIs")
+            summary_df = pd.DataFrame(all_summary_stats)
             st.dataframe(summary_df)
+            
+            # Complete results table
+            st.header("Complete Statistical Analysis Results")
+            complete_df = pd.DataFrame(all_wilcoxon_results)
+            
+            # Show expandable detailed results
+            with st.expander("View Detailed Results", expanded=False):
+                st.dataframe(complete_df)
             
             # Download buttons for results
             st.subheader("Download Results")
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 csv_raw = results_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     label="Download Raw Results",
                     data=csv_raw,
-                    file_name=f"wilcoxon_raw_results_{kpi_to_compare}.csv",
+                    file_name=f"wilcoxon_raw_results_multi_kpi.csv",
                     mime="text/csv"
                 )
-                # Add view toggle button
-                if st.button("📊 View Raw", key="view_raw"):
-                    st.session_state['show_raw'] = not st.session_state.get('show_raw', False)
+            
             with col2:
-                csv_wilcoxon = wilcoxon_df.to_csv(index=False).encode("utf-8")
+                csv_complete = complete_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
-                    label="Download Wilcoxon Results",
-                    data=csv_wilcoxon,
-                    file_name=f"wilcoxon_test_results_{kpi_to_compare}.csv",
+                    label="Download Complete Analysis",
+                    data=csv_complete,
+                    file_name=f"wilcoxon_complete_analysis.csv",
                     mime="text/csv"
                 )
-                # Add view toggle button
-                if st.button("📊 View Wilcoxon", key="view_wilcoxon"):
-                    st.session_state['show_wilcoxon'] = not st.session_state.get('show_wilcoxon', False)
-                    
+            
             with col3:
                 csv_summary = summary_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
-                    label="Download Summary Statistics",
+                    label="Download KPI Summary",
                     data=csv_summary,
-                    file_name=f"wilcoxon_summary_{kpi_to_compare}.csv",
+                    file_name=f"wilcoxon_kpi_summary.csv",
                     mime="text/csv"
                 )
-                # Add view toggle button
-                if st.button("📊 View Summary", key="view_summary"):
-                    st.session_state['show_summary'] = not st.session_state.get('show_summary', False)
-            # Display viewed results based on toggle states
-            if st.session_state.get('show_raw', False):
-                st.subheader("Raw Results Preview")
-                st.dataframe(results_df.head(20))
+            
+            with col4:
+                # Create algorithm ranking table
+                algorithm_rankings = []
+                for kpi in kpis_to_compare:
+                    kpi_results = [r for r in all_wilcoxon_results if r["KPI"] == kpi]
+                    # Add baseline to comparison
+                    baseline_data = {
+                        "KPI": kpi,
+                        "Algorithm": baseline_algo.upper(),
+                        "Mean_Value": kpi_results[0]["Baseline_Mean"] if kpi_results else 0,
+                        "Rank": 1  # Will be updated
+                    }
+                    
+                    algo_data = []
+                    for r in kpi_results:
+                        algo_data.append({
+                            "KPI": kpi,
+                            "Algorithm": r["Algorithm"],
+                            "Mean_Value": r["Algorithm_Mean"],
+                            "Rank": 1  # Will be updated
+                        })
+                    
+                    # Combine and rank
+                    all_algos = [baseline_data] + algo_data
+                    all_algos.sort(key=lambda x: x["Mean_Value"], reverse=True)
+                    
+                    # Assign ranks
+                    for i, algo in enumerate(all_algos):
+                        algo["Rank"] = i + 1
+                        algorithm_rankings.extend([algo])
                 
-            if st.session_state.get('show_wilcoxon', False):
-                st.subheader("Wilcoxon Test Results Preview")
-                st.dataframe(wilcoxon_df)
-                
-            if st.session_state.get('show_summary', False):
-                st.subheader("Summary Statistics Preview")
-                st.dataframe(summary_df)        
+                rankings_df = pd.DataFrame(algorithm_rankings)
+                csv_rankings = rankings_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="Download Algorithm Rankings",
+                    data=csv_rankings,
+                    file_name=f"algorithm_rankings_by_kpi.csv",
+                    mime="text/csv"
+                )
+            
             # Final success message
-            st.success(f"Wilcoxon test completed comparing {baseline_algo.upper()} against {len(comparison_algos)} algorithms for {kpi_to_compare} KPI")    
+            total_comparisons = len(kpis_to_compare) * len(comparison_algos)
+            st.success(f"Multi-KPI Wilcoxon test completed! Analyzed {total_comparisons} algorithm-KPI combinations comparing {baseline_algo.upper()} against {len(comparison_algos)} algorithms across {len(kpis_to_compare)} KPIs.")            
+    # elif mode == "Wilcoxon Test":
+    #     st.header("Statistical Algorithm Comparison")
+        
+    #     # Configure test parameters
+    #     # iterations = st.slider("Iterations per run", 10, 100, 30)
+    #     n_seeds = st.slider("Number of seeds (samples)", 2, 30, 10)
+        
+    #     # Choose baseline algorithm (default to PFO)
+    #     baseline_algo = st.selectbox(
+    #         "Baseline Algorithm", 
+    #         ["pfo", "avoa", "aqua", "co", "coa", "do", "fla", "gto", "hba", "hoa", "poa", "rime", "roa", "rsa", "sto"],
+    #         index=0  # Default to PFO
+    #     )
+        
+    #     # Choose algorithms to compare against baseline
+    #     comparison_algos = st.multiselect(
+    #         "Algorithms to Compare Against Baseline", 
+    #         [algo for algo in ["avoa", "aqua", "co", "coa", "do", "fla", "gto", "hba", "hoa", "pfo", "poa", "rime", "roa", "rsa", "sto"] if algo != baseline_algo],
+    #         default=["co", "rime"]  # Default selection
+    #     )
+        
+    #     # Add option to compare all algorithms against baseline
+    #     if st.checkbox("Compare All Algorithms Against Baseline", value=False):
+    #         comparison_algos = [algo for algo in ["avoa", "aqua", "co", "coa", "do", "fla", "gto", "hba", "hoa", "pfo", "poa", "rime", "roa", "rsa", "sto"] 
+    #                         if algo != baseline_algo]
+    #         st.info(f"Comparing {baseline_algo.upper()} against {len(comparison_algos)} algorithms")
+        
+    #     # Choose KPI to compare
+    #     kpi_to_compare = st.selectbox(
+    #         "KPI to Compare", 
+    #         ["fitness", "average_sinr", "fairness", "energy_efficiency", "spectral_efficiency", "coverage", "load_balance", "handover_rate"],
+    #         index=0
+    #     )
+        
+    #     # Select scenario
+    #     scenario_name = st.selectbox("Scenario", list(SCENARIOS.keys()), key="wilcoxon_scenario")
+    #     ue_list = SCENARIOS[scenario_name]["UE"]
+    #     bs_list = SCENARIOS[scenario_name]["BS"]
+        
+    #     # Choose specific UE/BS config for the test
+    #     selected_ue = st.selectbox("UE Configuration", ue_list, index=0)
+    #     selected_bs = st.selectbox("BS Configuration", bs_list, index=0)
+        
+    #     # Run button
+    #     if st.button("Run Wilcoxon Test"):
+    #         # Import required packages
+    #         from scipy import stats
+    #         import numpy as np
+    #         import pandas as pd
+    #         import matplotlib.pyplot as plt
+    #         import seaborn as sns
+            
+    #         # Create progress indicators
+    #         progress_bar = st.progress(0)
+    #         status_text = st.empty()
+            
+    #         # Calculate total runs
+    #         total_runs = (len(comparison_algos) + 1) * n_seeds  # +1 for baseline
+    #         completed_runs = 0
+            
+    #         # Dictionary to store results
+    #         all_results = {baseline_algo: []}
+    #         for algo in comparison_algos:
+    #             all_results[algo] = []
+            
+    #         # Run baseline algorithm first
+    #         status_text.text(f"Running baseline {baseline_algo.upper()} algorithm...")
+            
+    #         for seed in range(1, n_seeds + 1):
+    #             # Update status
+    #             status_text.text(f"Running {baseline_algo.upper()} (seed {seed}/{n_seeds})")
+                
+    #             # Set random seed for reproducibility
+    #             np.random.seed(seed)
+                
+    #             # Create environment and tracker
+    #             env = NetworkEnvironment({"num_ue": selected_ue, "num_bs": selected_bs})
+    #             tracker = KPITracker()
+                
+    #             # Run algorithm
+    #             result = run_metaheuristic(
+    #                 env=env,
+    #                 algorithm=baseline_algo,
+    #                 epoch=iterations,
+    #                 kpi_logger=tracker,
+    #                 visualize_callback=None,
+    #                 iterations=iterations
+    #             )
+                
+    #             # Extract the KPI value for this run
+    #             kpi_value = result["metrics"].get(kpi_to_compare, 0)
+    #             if kpi_value is None:
+    #                 kpi_value = 0
+                
+    #             # Store result
+    #             all_results[baseline_algo].append({
+    #                 "algorithm": baseline_algo.upper(),
+    #                 "seed": seed,
+    #                 "kpi_value": kpi_value,
+    #                 "cpu_time": result["metrics"].get("cpu_time", 0)
+    #             })
+                
+    #             # Update progress
+    #             completed_runs += 1
+    #             progress_bar.progress(completed_runs / total_runs)
+            
+    #         # Run comparison algorithms
+    #         for algo in comparison_algos:
+    #             for seed in range(1, n_seeds + 1):
+    #                 # Update status
+    #                 status_text.text(f"Running {algo.upper()} (seed {seed}/{n_seeds})")
+                    
+    #                 # Set random seed for reproducibility
+    #                 np.random.seed(seed)
+                    
+    #                 # Create environment and tracker
+    #                 env = NetworkEnvironment({"num_ue": selected_ue, "num_bs": selected_bs})
+    #                 tracker = KPITracker()
+                    
+    #                 # Run algorithm
+    #                 result = run_metaheuristic(
+    #                     env=env,
+    #                     algorithm=algo,
+    #                     epoch=iterations,
+    #                     kpi_logger=tracker,
+    #                     visualize_callback=None,
+    #                     iterations=iterations
+    #                 )
+                    
+    #                 # Extract the KPI value for this run
+    #                 kpi_value = result["metrics"].get(kpi_to_compare, 0)
+    #                 if kpi_value is None:
+    #                     kpi_value = 0
+                    
+    #                 # Store result
+    #                 all_results[algo].append({
+    #                     "algorithm": algo.upper(),
+    #                     "seed": seed,
+    #                     "kpi_value": kpi_value,
+    #                     "cpu_time": result["metrics"].get("cpu_time", 0)
+    #                 })
+                    
+    #                 # Update progress
+    #                 completed_runs += 1
+    #                 progress_bar.progress(completed_runs / total_runs)
+            
+    #         # Test complete - create DataFrame with all results
+    #         records = []
+    #         for algo, results in all_results.items():
+    #             records.extend(results)
+            
+    #         results_df = pd.DataFrame(records)
+            
+    #         # Display raw results if requested
+    #         if st.checkbox("Show raw results", value=False):
+    #             st.dataframe(results_df)
+            
+    #         # Perform Wilcoxon signed-rank test for each algorithm against baseline
+    #         st.subheader(f"Wilcoxon Signed-Rank Test Results (vs. {baseline_algo.upper()})")
+            
+    #         wilcoxon_results = []
+    #         baseline_values = np.array([r["kpi_value"] for r in all_results[baseline_algo]])
+            
+    #         for algo in comparison_algos:
+    #             algo_values = np.array([r["kpi_value"] for r in all_results[algo]])
+                
+    #             # Perform Wilcoxon test
+    #             w_stat, p_value = stats.wilcoxon(baseline_values, algo_values)
+                
+    #             # Calculate effect size - Cliff's Delta is a good non-parametric effect size
+    #             # (simplified calculation here)
+    #             mean_diff = np.mean(algo_values) - np.mean(baseline_values)
+    #             pooled_std = np.sqrt((np.std(baseline_values)**2 + np.std(algo_values)**2) / 2)
+    #             effect_size = mean_diff / pooled_std if pooled_std != 0 else 0
+                
+    #             # Determine significance level
+    #             if p_value < 0.01:
+    #                 sig_level = "*** (p<0.01)"
+    #             elif p_value < 0.05:
+    #                 sig_level = "** (p<0.05)"
+    #             elif p_value < 0.1:
+    #                 sig_level = "* (p<0.1)"
+    #             else:
+    #                 sig_level = "ns"
+                
+    #             # Determine which algorithm is better
+    #             baseline_mean = np.mean(baseline_values)
+    #             algo_mean = np.mean(algo_values)
+                
+    #             # For fairness and most KPIs, higher is better, but note this might need adjustment
+    #             # for KPIs where lower is better
+    #             comparison = "better" if algo_mean > baseline_mean else "worse"
+    #             if abs(algo_mean - baseline_mean) / max(baseline_mean, 1e-10) < 0.01:  # 1% threshold
+    #                 comparison = "similar"
+                    
+    #             # Add to results
+    #             wilcoxon_results.append({
+    #                 "Algorithm": algo.upper(),
+    #                 "vs. Baseline": baseline_algo.upper(),
+    #                 "Mean Difference": algo_mean - baseline_mean,
+    #                 "% Difference": ((algo_mean - baseline_mean) / max(baseline_mean, 1e-10)) * 100,
+    #                 "p-value": p_value,
+    #                 "Significance": sig_level,
+    #                 "Effect Size": effect_size,
+    #                 "Comparison": comparison
+    #             })
+            
+    #         # Create and display Wilcoxon test results table
+    #         wilcoxon_df = pd.DataFrame(wilcoxon_results)
+    #         st.dataframe(wilcoxon_df)
+            
+    #         # Create summary visualization
+    #         st.subheader(f"Statistical Comparison for {kpi_to_compare.replace('_', ' ').title()}")
+            
+    #         # Boxplot comparison
+    #         fig, ax = plt.subplots(figsize=(12, 6))
+            
+    #         # Prepare data for boxplot
+    #         box_data = []
+    #         box_labels = []
+            
+    #         # Always put baseline first
+    #         box_data.append([r["kpi_value"] for r in all_results[baseline_algo]])
+    #         box_labels.append(f"{baseline_algo.upper()} (Baseline)")
+            
+    #         for algo in comparison_algos:
+    #             box_data.append([r["kpi_value"] for r in all_results[algo]])
+    #             box_labels.append(algo.upper())
+            
+    #         # Create boxplot
+    #         bp = ax.boxplot(box_data, patch_artist=True, labels=box_labels)
+            
+    #         # Color the baseline differently
+    #         for i, box in enumerate(bp['boxes']):
+    #             if i == 0:  # Baseline
+    #                 box.set(facecolor='lightblue')
+    #             else:
+    #                 # Color based on significance
+    #                 if wilcoxon_results[i-1]["p-value"] < 0.05:
+    #                     if wilcoxon_results[i-1]["Comparison"] == "better":
+    #                         box.set(facecolor='lightgreen')
+    #                     elif wilcoxon_results[i-1]["Comparison"] == "worse":
+    #                         box.set(facecolor='lightcoral')
+    #                     else:
+    #                         box.set(facecolor='lightyellow')
+    #                 else:
+    #                     box.set(facecolor='lightyellow')
+            
+    #         # Add title and labels
+    #         ax.set_title(f'Distribution of {kpi_to_compare.replace("_", " ").title()} Values')
+    #         ax.set_ylabel(kpi_to_compare.replace('_', ' ').title())
+    #         ax.set_xlabel('Algorithm')
+            
+    #         # Rotate x-axis labels for better readability
+    #         plt.xticks(rotation=45, ha='right')
+            
+    #         # Add a legend
+    #         from matplotlib.patches import Patch
+    #         legend_elements = [
+    #             Patch(facecolor='lightblue', label='Baseline'),
+    #             Patch(facecolor='lightgreen', label='Significantly Better (p<0.05)'),
+    #             Patch(facecolor='lightcoral', label='Significantly Worse (p<0.05)'),
+    #             Patch(facecolor='lightyellow', label='No Significant Difference')
+    #         ]
+    #         ax.legend(handles=legend_elements, loc='upper right')
+            
+    #         # Add grid for easier reading
+    #         ax.grid(True, linestyle='--', alpha=0.7)
+            
+    #         fig.tight_layout()
+    #         st.pyplot(fig)
+            
+    #         # Create bar chart showing mean values with error bars (95% CI)
+    #         st.subheader(f"Mean {kpi_to_compare.replace('_', ' ').title()} Comparison")
+            
+    #         # Calculate means and confidence intervals
+    #         means = []
+    #         ci_low = []
+    #         ci_high = []
+    #         labels = []
+            
+    #         # Always put baseline first
+    #         baseline_data = np.array([r["kpi_value"] for r in all_results[baseline_algo]])
+    #         means.append(np.mean(baseline_data))
+    #         # 95% CI using t-distribution
+    #         sem = stats.sem(baseline_data)
+    #         ci = sem * stats.t.ppf((1 + 0.95) / 2, len(baseline_data) - 1)
+    #         ci_low.append(means[0] - ci)
+    #         ci_high.append(means[0] + ci)
+    #         labels.append(f"{baseline_algo.upper()} (Baseline)")
+            
+    #         for algo in comparison_algos:
+    #             algo_data = np.array([r["kpi_value"] for r in all_results[algo]])
+    #             means.append(np.mean(algo_data))
+    #             sem = stats.sem(algo_data)
+    #             ci = sem * stats.t.ppf((1 + 0.95) / 2, len(algo_data) - 1)
+    #             ci_low.append(means[-1] - ci)
+    #             ci_high.append(means[-1] + ci)
+    #             labels.append(algo.upper())
+            
+    #         # Create bar chart
+    #         fig, ax = plt.subplots(figsize=(12, 6))
+            
+    #         # Plot bars
+    #         x = np.arange(len(labels))
+    #         bars = ax.bar(x, means, yerr=np.array([np.array(means) - np.array(ci_low), 
+    #                                             np.array(ci_high) - np.array(means)]),
+    #                     capsize=5, alpha=0.7)
+            
+    #         # Color bars based on statistical significance
+    #         bars[0].set_color('lightblue')  # Baseline
+            
+    #         for i in range(1, len(bars)):
+    #             if wilcoxon_results[i-1]["p-value"] < 0.05:
+    #                 if wilcoxon_results[i-1]["Comparison"] == "better":
+    #                     bars[i].set_color('lightgreen')
+    #                 elif wilcoxon_results[i-1]["Comparison"] == "worse":
+    #                     bars[i].set_color('lightcoral')
+    #                 else:
+    #                     bars[i].set_color('lightyellow')
+    #             else:
+    #                 bars[i].set_color('lightyellow')
+            
+    #         # Add labels and title
+    #         ax.set_ylabel(kpi_to_compare.replace('_', ' ').title())
+    #         ax.set_title(f'Mean {kpi_to_compare.replace("_", " ").title()} with 95% Confidence Intervals')
+    #         ax.set_xticks(x)
+    #         ax.set_xticklabels(labels, rotation=45, ha='right')
+            
+    #         # Add significance markers
+    #         for i in range(1, len(bars)):
+    #             if wilcoxon_results[i-1]["p-value"] < 0.01:
+    #                 marker = "***"
+    #             elif wilcoxon_results[i-1]["p-value"] < 0.05:
+    #                 marker = "**"
+    #             elif wilcoxon_results[i-1]["p-value"] < 0.1:
+    #                 marker = "*"
+    #             else:
+    #                 marker = ""
+                    
+    #             if marker:
+    #                 height = max(means[i], means[0]) * 1.05
+    #                 ax.text(x[i], height, marker, ha='center', va='bottom', fontsize=12)
+            
+    #         # Add a legend
+    #         legend_elements = [
+    #             Patch(facecolor='lightblue', label='Baseline'),
+    #             Patch(facecolor='lightgreen', label='Significantly Better (p<0.05)'),
+    #             Patch(facecolor='lightcoral', label='Significantly Worse (p<0.05)'),
+    #             Patch(facecolor='lightyellow', label='No Significant Difference')
+    #         ]
+    #         ax.legend(handles=legend_elements, loc='upper right')
+            
+    #         # Add significance legend
+    #         ax.text(0.98, 0.02, "*** p<0.01, ** p<0.05, * p<0.1", 
+    #                 transform=ax.transAxes, ha='right', va='bottom', fontsize=10)
+            
+    #         # Add grid
+    #         ax.grid(True, linestyle='--', alpha=0.3, axis='y')
+            
+    #         fig.tight_layout()
+    #         st.pyplot(fig)
+            
+    #         # Create convergence plot to compare performance over iterations
+    #         st.subheader("Convergence Behavior Analysis")
+            
+    #         # First, rerun algorithms to track convergence
+    #         convergence_data = {algo: [] for algo in [baseline_algo] + comparison_algos}
+            
+    #         # Select a single seed for convergence analysis
+    #         convergence_seed = n_seeds // 2  # Middle seed
+            
+    #         # Create placeholder for convergence plot
+    #         convergence_plot = st.empty()
+            
+    #         # Run baseline and comparison algos and track convergence
+    #         for algo in [baseline_algo] + comparison_algos:
+    #             # Set random seed
+    #             np.random.seed(convergence_seed)
+                
+    #             # Create environment
+    #             env = NetworkEnvironment({"num_ue": selected_ue, "num_bs": selected_bs})
+                
+    #             # Create tracker that will record history
+    #             tracker = KPITracker()
+                
+    #             # Run algorithm with the tracker
+    #             result = run_metaheuristic(
+    #                 env=env,
+    #                 algorithm=algo,
+    #                 epoch=iterations,
+    #                 kpi_logger=tracker,
+    #                 visualize_callback=None,
+    #                 iterations=iterations
+    #             )
+                
+    #             # Store convergence data
+    #             if kpi_to_compare in tracker.history:
+    #                 convergence_data[algo] = tracker.history[kpi_to_compare].tolist()
+    #             else:
+    #                 # If KPI not in history, create a flat line with the final value
+    #                 convergence_data[algo] = [result["metrics"].get(kpi_to_compare, 0)] * iterations
+            
+    #         # Create convergence plot
+    #         fig, ax = plt.subplots(figsize=(12, 6))
+            
+    #         # Plot line for baseline
+    #         ax.plot(range(1, len(convergence_data[baseline_algo])+1), 
+    #                 convergence_data[baseline_algo], 
+    #                 label=f"{baseline_algo.upper()} (Baseline)",
+    #                 linewidth=3, color='blue')
+            
+    #         # Plot lines for comparison algorithms
+    #         colors = plt.cm.tab10.colors
+    #         for i, algo in enumerate(comparison_algos):
+    #             ax.plot(range(1, len(convergence_data[algo])+1), 
+    #                     convergence_data[algo],
+    #                     label=algo.upper(),
+    #                     linewidth=1.5, color=colors[(i+1) % len(colors)])
+            
+    #         # Add labels and title
+    #         ax.set_xlabel('Iteration')
+    #         ax.set_ylabel(kpi_to_compare.replace('_', ' ').title())
+    #         ax.set_title(f'Convergence Behavior for {kpi_to_compare.replace("_", " ").title()}')
+            
+    #         # Add legend
+    #         ax.legend()
+            
+    #         # Add grid
+    #         ax.grid(True, linestyle='--', alpha=0.7)
+            
+    #         # Display convergence plot
+    #         convergence_plot.pyplot(fig)
+            
+    #         # Create summary table
+    #         st.subheader("Statistical Summary")
+            
+    #         # Calculate summary statistics
+    #         summary_data = []
+            
+    #         # Baseline first
+    #         baseline_data = np.array([r["kpi_value"] for r in all_results[baseline_algo]])
+    #         summary_data.append({
+    #             "Algorithm": f"{baseline_algo.upper()} (Baseline)",
+    #             "Mean": np.mean(baseline_data),
+    #             "Median": np.median(baseline_data),
+    #             "Std Dev": np.std(baseline_data),
+    #             "Min": np.min(baseline_data),
+    #             "Max": np.max(baseline_data),
+    #             "95% CI Lower": np.mean(baseline_data) - stats.sem(baseline_data) * stats.t.ppf((1 + 0.95) / 2, len(baseline_data) - 1),
+    #             "95% CI Upper": np.mean(baseline_data) + stats.sem(baseline_data) * stats.t.ppf((1 + 0.95) / 2, len(baseline_data) - 1)
+    #         })
+            
+    #         # Comparison algorithms
+    #         for algo in comparison_algos:
+    #             algo_data = np.array([r["kpi_value"] for r in all_results[algo]])
+    #             summary_data.append({
+    #                 "Algorithm": algo.upper(),
+    #                 "Mean": np.mean(algo_data),
+    #                 "Median": np.median(algo_data),
+    #                 "Std Dev": np.std(algo_data),
+    #                 "Min": np.min(algo_data),
+    #                 "Max": np.max(algo_data),
+    #                 "95% CI Lower": np.mean(algo_data) - stats.sem(algo_data) * stats.t.ppf((1 + 0.95) / 2, len(algo_data) - 1),
+    #                 "95% CI Upper": np.mean(algo_data) + stats.sem(algo_data) * stats.t.ppf((1 + 0.95) / 2, len(algo_data) - 1)
+    #             })
+            
+    #         # Display summary table
+    #         summary_df = pd.DataFrame(summary_data)
+    #         st.dataframe(summary_df)
+            
+    #         # Download buttons for results
+    #         st.subheader("Download Results")
+            
+    #         col1, col2, col3 = st.columns(3)
+            
+    #         with col1:
+    #             csv_raw = results_df.to_csv(index=False).encode("utf-8")
+    #             st.download_button(
+    #                 label="Download Raw Results",
+    #                 data=csv_raw,
+    #                 file_name=f"wilcoxon_raw_results_{kpi_to_compare}.csv",
+    #                 mime="text/csv"
+    #             )
+    #             # Add view toggle button
+    #             if st.button("📊 View Raw", key="view_raw"):
+    #                 st.session_state['show_raw'] = not st.session_state.get('show_raw', False)
+    #         with col2:
+    #             csv_wilcoxon = wilcoxon_df.to_csv(index=False).encode("utf-8")
+    #             st.download_button(
+    #                 label="Download Wilcoxon Results",
+    #                 data=csv_wilcoxon,
+    #                 file_name=f"wilcoxon_test_results_{kpi_to_compare}.csv",
+    #                 mime="text/csv"
+    #             )
+    #             # Add view toggle button
+    #             if st.button("📊 View Wilcoxon", key="view_wilcoxon"):
+    #                 st.session_state['show_wilcoxon'] = not st.session_state.get('show_wilcoxon', False)
+                    
+    #         with col3:
+    #             csv_summary = summary_df.to_csv(index=False).encode("utf-8")
+    #             st.download_button(
+    #                 label="Download Summary Statistics",
+    #                 data=csv_summary,
+    #                 file_name=f"wilcoxon_summary_{kpi_to_compare}.csv",
+    #                 mime="text/csv"
+    #             )
+    #             # Add view toggle button
+    #             if st.button("📊 View Summary", key="view_summary"):
+    #                 st.session_state['show_summary'] = not st.session_state.get('show_summary', False)
+    #         # Display viewed results based on toggle states
+    #         if st.session_state.get('show_raw', False):
+    #             st.subheader("Raw Results Preview")
+    #             st.dataframe(results_df.head(20))
+                
+    #         if st.session_state.get('show_wilcoxon', False):
+    #             st.subheader("Wilcoxon Test Results Preview")
+    #             st.dataframe(wilcoxon_df)
+                
+    #         if st.session_state.get('show_summary', False):
+    #             st.subheader("Summary Statistics Preview")
+    #             st.dataframe(summary_df)        
+    #         # Final success message
+    #         st.success(f"Wilcoxon test completed comparing {baseline_algo.upper()} against {len(comparison_algos)} algorithms for {kpi_to_compare} KPI")    

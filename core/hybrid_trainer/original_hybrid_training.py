@@ -9,7 +9,7 @@ print(f"Verified Project Root: {project_root}")  # Should NOT be "/"
 
 # ENVIRONMENT REGISTRATION MUST be outside class definition
 from ray.tune.registry import register_env
-from core.envs.custom_channel_env import NetworkEnvironment
+from core.envs.custom_channel_env import NetworkEnvironment, PolicyMappingManager
 
 def env_creator(env_config):
     return NetworkEnvironment(env_config)
@@ -40,7 +40,21 @@ import gymnasium as gym
 from collections import OrderedDict
 from ray.rllib.algorithms.callbacks import DefaultCallbacks
 import json
-       
+
+import numpy as np
+import signal
+import pandas as pd
+import matplotlib.pyplot as plt
+import itertools
+from matplotlib.path import Path
+from matplotlib.spines import Spine
+from matplotlib.transforms import Affine2D
+from collections import defaultdict
+
+# 1) Seed all RNGs
+np.random.seed(0)
+torch.manual_seed(0)
+   
 class MetaPolicy(TorchModelV2, nn.Module):
     def __init__(self, obs_space, action_space, num_outputs, model_config, name, **kwargs):
         nn.Module.__init__(self)
@@ -49,14 +63,14 @@ class MetaPolicy(TorchModelV2, nn.Module):
         # Extract config parameters
         custom_config = model_config.get("custom_model_config", {})
         self.initial_weights = custom_config.get("initial_weights", [])
-        self.num_bs = custom_config.get("num_bs", 5)
+        self.num_bs = custom_config.get("num_bs", 3)
         self.num_ue = custom_config.get("num_ue", 20)
         
         # Calculate input size - one UE's observation size
         if isinstance(obs_space, gym.spaces.Dict):
             # For Dict space, we need the size of a single agent's observation
             # This should be 2*num_bs+1
-            input_size = 3 * self.num_bs + 1
+            input_size = 4 * self.num_bs + 4
         else:
             input_size = np.prod(obs_space.shape)
             
@@ -69,7 +83,7 @@ class MetaPolicy(TorchModelV2, nn.Module):
         self.policy_network = nn.Sequential(
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size, self.num_bs)  # Output should match number of BS options
+            nn.Linear(hidden_size, self.num_bs+1)  # Output should match number of BS options
         )
         
         # Value network (critic) - also with a hidden layer
@@ -211,6 +225,7 @@ class VizCallback(DefaultCallbacks):
             json.dump({"iteration": it, "associations": associations}, f)
         print(f"[VizCallback] wrote /tmp/assoc/assoc_iter{it}.json")
 # RAY_DEDUP_LOGS=0
+PYTHONWARNINGS="ignore::DeprecationWarning"
 class HybridTraining:
     def __init__(self, config: Dict):
         # Initialize Ray AFTER path modification 
@@ -224,7 +239,7 @@ class HybridTraining:
                     },
                     logging_level=logging.INFO,
                     log_to_driver=True,
-                    ignore_reinit_error=True,
+                    ignore_reinit_error=True,                    
                     **config.get("ray_resources", {})
                 )
             
@@ -255,10 +270,10 @@ class HybridTraining:
         
         except Exception as e:
             print(f"Ray initialization error: {e}")
-            ray.init(
-                ignore_reinit_error=True,
-                num_cpus=2  # Minimal fallback configuration
-            )
+            # ray.init(
+            #     ignore_reinit_error=True,
+            #     num_cpus=2  # Minimal fallback configuration
+            # )
         
         # Import NetworkEnvironment - handle both direct import and delayed import
         try:
@@ -272,18 +287,7 @@ class HybridTraining:
                 NetworkEnvironment = getattr(module, "NetworkEnvironment")
                 self.env = NetworkEnvironment(config["env_config"])
             except Exception as e:
-                raise ImportError(f"Failed to import NetworkEnvironment: {e}")    
-        # @ray.remote
-        # def verify_package():
-        #     try:
-        #         from core.envs.custom_channel_env import NetworkEnvironment
-        #         from core.hybrid_trainer.hybrid_training import HybridTraining
-        #         return True
-        #     except ImportError as e:
-        #         print(f"Import failed: {e}")
-        #         return False
-        # assert ray.get(verify_package.remote()), "Package verification failed!"
-        # ✅ Define observation/action spaces from the environment
+                raise ImportError(f"Failed to import NetworkEnvironment: {e}")   
         
         self.config = config
         self.env = NetworkEnvironment(config["env_config"])
@@ -293,54 +297,40 @@ class HybridTraining:
         self.current_epoch = 0  # Track hybrid training epochs
         self.metaheuristic_runs = 0
         
-        self.max_metaheuristic_runs = 1  
-        # self.dashboard = LiveDashboard(
-        #     network_bounds=(0, 100)
-        #     # algorithm_colors=self._init_algorithm_colors(),
-        #     # update_interval=config["visualization"]["update_interval_ms"]
-        # )
-        # display.display(self.dashboard.fig)
-        
-        # ray.init(**config["ray_resources"])
+        self.max_metaheuristic_runs = 1          
         # Create log directory if needed
         if config["logging"]["enabled"]:
-            os.makedirs(config["logging"]["log_dir"], exist_ok=True)
+            os.makedirs(config["logging"]["log_dir"], exist_ok=True)       
+        
             
-    
-    def _init_algorithm_colors(self) -> Dict:
-        """Map algorithms to visualization colors"""
-        return {
-            "pfo": "#FF6B6B",  # Coral
-            "aco": "#4ECDC4",   # Teal
-            "pso": "#45B7D1", # Sky Blue
-            "de": "#FFA500",    # Orange 
-            "marl": "#9B59B6"    # Purple
-        }
+            
+        # Initialize algorithm instance as None
+        self.algo = None
+        signal.signal(signal.SIGINT, self.on_interrupt)
 
+            
+        print("Network topology and policy manager initialized")
+        # print("Initial policy distribution:")
+        self.env.log_policy_status()
+        # 2) Grab the manager out of the env
+        self.manager = self.env.policy_manager
+
+        # 3) Define your mapping function *as a closure* over self.manager
+        def policy_mapping_fn(agent_id, episode=None, **kwargs):
+            bs_idx = self.manager.get_closest_bs(agent_id)
+            return f"bs_{bs_idx}_policy"
+
+        # 4) Store it as an attribute so you can pass it into PPOConfig later
+        self.policy_mapping_fn = policy_mapping_fn
+        
+    def on_interrupt(self, sig, frame):
+            print("Training interrupted (SIGINT). Saving current state…")
+            self.kpi_logger.save_to_csv()
+            sys.exit(0)    
     def _execute_metaheuristic_phase(self, algorithm: str) -> Dict:
         """Run a single metaheuristic optimization"""
-        print(f"\n Initializing {algorithm.upper()} optimization...")
-        # from IPython import display
-        # Run optimization with visualization callback
-       # Create a closure to capture algo state
-        def de_visualize_callback(de_data: Dict):
-            # display.clear_output(wait=True)  # Clear previous dashboard
-            with self.dashboard.fig.batch_update():
-                self.dashboard.update(
-                        phase="metaheuristic",
-                        data={
-                            "env_state": self.env.get_current_state(),  # Pass env_state here
-                            "metrics": {
-                                "algorithm": algorithm,
-                                "positions": de_data["positions"],
-                                "fitness": de_data["fitness"]
-                            }
-                        }
-                    )           
-            # # Force Colab DOM update
-            # display(self.dashboard.fig)
-            time.sleep(0.1)
-        # solution = run_metaheuristic(self.env, algorithm)
+        print(f"\n Initializing {algorithm.upper()} optimization...")     
+    
         # Pass the visualization hook to the metaheuristic
         solution = run_metaheuristic(
             self.env,
@@ -351,102 +341,74 @@ class HybridTraining:
         )
         
         print("Final KPI History after metaheuristic phase:")
-        # print(self.kpi_logger.history)
+        
         # Log and visualize results
         self.kpi_logger.log_algorithm_performance(algorithm=algorithm,metrics=solution["metrics"])
-        # self.dashboard.update_algorithm_metrics(algorithm=algorithm,metrics=solution["metrics"] )
-        
-        return solution
+        # self.dashboard.update_algorithm_metrics(algorithm=algorithm,metrics=solution["metrics"] )        
+        return solution           
     
-    def _execute_marl_phase_direct(self, initial_policy: np.ndarray = None):
-        """
-        A direct‐API PPO loop that after each train() does one env.step()
-        so that your step() stores last_info, and then yields the solution.
-        """
-        print("Running the marl phase using direct-API PPO loop....")
-        initial_weights = []
-        if initial_policy is not None:
-            initial_weights = initial_policy.tolist()  # ✅ Correct extraction
-            assert len(initial_weights) == self.config["env_config"]["num_ue"]
-            
-        env_config = {
-            **self.config["env_config"]            
-        }
-        # 1) build the algorithm once
-        marl_config = (
-            PPOConfig()
-            .environment(
-                "NetworkEnv",
-                env_config=env_config
-            )
-            .training(
-                model={
-                    "custom_model": "meta_policy",
-                    "custom_model_config": {
-                        "initial_weights": initial_weights,
-                        "num_bs": self.config["env_config"]["num_bs"],
-                        "num_ue": self.config["env_config"]["num_ue"]
-                    }
-                },
-                
-                gamma=0.99,
-                lr=0.0005,  # Slightly higher learning rate
-                lr_schedule=[(0, 0.00005), (1000, 0.0001), (10000, 0.0005)],  # Gradual lr increase
-                entropy_coeff=0.01,  # Add exploration
-                kl_coeff=0.2,
-                train_batch_size=4000,
-                sgd_minibatch_size=128,
-                num_sgd_iter=10,
-                clip_param=0.2,
-            ).env_runners(
-            sample_timeout_s=3600, # 600,  # Increase from default (180s) to 10 minutes
-            rollout_fragment_length=25 # 50  # Decrease from default (200) to collect samples faster
-                )
-            .multi_agent(
-                policies={
-                    f"ue_{i}": (None, self.obs_space[f"ue_{i}"], self.act_space[f"ue_{i}"], {})
-                    for i in range(self.config["env_config"]["num_ue"])
-                },
-                policy_mapping_fn=lambda agent_id, episode=None, worker=None, **kwargs: agent_id
-            )
+
+    def _adaptive_retuning_required(self) -> bool:
+        """Check if metaheuristic retuning is needed"""
+        metrics = self.kpi_logger.get_recent_metrics(
+            window_size=self.config["adaptive_tuning"]["stagnation_window"]
         )
-        algo = marl_config.build()
-        # 2) (optionally) restore from a checkpoint
-        #    if you wanted to warm-start from a Tune checkpoint:
-        # if self.config.get("checkpoint_dir"):
-        #     algo.restore(self.config["checkpoint_dir"])
-
-        # 3) run exactly marl_steps_per_phase training iterations
-        results = []
-        for it in range(self.config["marl_steps_per_phase"]):
-            result = algo.train()
-            results.append(result)
-            # call your callback so that Streamlit sees the metrics
-            for cb in self._callbacks:
-                cb.on_result(None, None, None, result)
-
-        # 4) return the trained algo so that your wrapper can extract solution
-        return algo, results
+        return (np.mean(metrics["reward"]) < 
+                self.config["adaptive_tuning"]["stagnation_threshold"])
     
-    def _execute_marl_phase(self, initial_policy: Dict = None):
-        print(f"\n Starting {self.config.get('marl_algorithm','PPO').upper()} training...")
+    def _compare_algorithms(self) -> Dict:
+        """Run and compare multiple metaheuristics"""
+        algorithm_results = {}      
 
-        # Prepare the list of initial biases for the policy network
+        for algo in self.config["metaheuristic_algorithms"]:
+            self.env.reset()
+            algorithm_results[algo] = self._execute_metaheuristic_phase(algo)       
+        return algorithm_results
+    
+    def _build_algorithm(self, initial_policy: dict = None):
+        """Build or rebuild the PPO algorithm instance"""
+        
+        # Prepare initial weights
         initial_weights = []
         if initial_policy is not None:
             initial_weights = initial_policy.tolist()
             assert len(initial_weights) == self.config["env_config"]["num_ue"]
+        
+        env_config = {
+            **self.config["env_config"],
+            "initial_assoc": initial_policy
+        }
+        # Make sure this has the right num_ue
+        # print(f"DEBUG: num_ue in env_config: {env_config.get('num_ue')}")
+        # policies = {
+        #     f"ue_{i}": (
+        #         None,
+        #         self.obs_space[f"ue_{i}"],
+        #         self.act_space[f"ue_{i}"],
+        #         {}
+        #     )
+        #     for i in range(self.config["env_config"]["num_ue"])
+        # }
+        # Get a single UE's observation space as the template
+        single_ue_obs_space = self.obs_space.spaces["ue_0"]  # This is gym.spaces.Box(shape=(obs_dim,))
+        single_ue_act_space = self.act_space.spaces["ue_0"]  # Same for action space
 
-        env_config = {**self.config["env_config"]}
-
-        # Build the PPO config
+        policies = {
+            f"bs_{i}_policy": (None, single_ue_obs_space, single_ue_act_space, {})
+            for i in range(self.config["env_config"]["num_bs"])
+            }
+        
+        # Build PPO config with policy sharing
         marl_config = (
             PPOConfig()
             .environment("NetworkEnv", env_config=env_config)
+            # Total rollout size per iteration =rollout_fragment_length × num_env_runners 
             .env_runners(
-                rollout_fragment_length=10,   # collect 10 frames per worker
-                sample_timeout_s=3600          # 10 minutes max
-            )
+                rollout_fragment_length=10,  # Increased from 10 for better experience collection              
+                num_env_runners=0,  # Quad core machine, 1 or 2
+                sample_timeout_s=600
+                ) 
+                    
             .training(
                 model={
                     "custom_model": "meta_policy",
@@ -457,221 +419,499 @@ class HybridTraining:
                     }
                 },
                 gamma=0.99,
-                lr=5e-4,
-                lr_schedule=[(0, 5e-5), (1000, 1e-4), (10000, 5e-4)],
-                entropy_coeff=0.01,
+                lr=1e-4, # 1e-4 for 60
+                lr_schedule=[(0, 1e-4), (50, 3e-4), (100, 1e-4)], 
+                # lr_schedule=[(0, 5e-5), (1000, 1e-4), (10000, 5e-4)],
+                entropy_coeff=0.02, #0.01,
+                entropy_coeff_schedule=[
+                    (0, 0.05),      # High exploration initially
+                    (50, 0.02),   # Reduce as training progresses
+                    (100, 0.01),  # Low exploration for fine-tuning
+                    ],
                 kl_coeff=0.2,
-                train_batch_size=4000,
-                sgd_minibatch_size=128,
-                num_sgd_iter=10,
-                clip_param=0.2,
+                train_batch_size_per_learner=1800, #  for 60
+                sgd_minibatch_size=180, # for 60
+                num_sgd_iter=10, # 8 for 60
+                clip_param=0.15, # 0.15 for 60
+                
             )
             .multi_agent(
-                policies={
-                    f"ue_{i}": (None,
-                                self.obs_space[f"ue_{i}"],
-                                self.act_space[f"ue_{i}"], {})
-                    for i in range(self.config["env_config"]["num_ue"])
-                },
-                policy_mapping_fn=lambda agent_id, episode=None, worker=None, **kwargs: agent_id
+                policies=policies, 
+                policy_mapping_fn=self.policy_mapping_fn,
             )
-            # Register our VizCallback so RLlib will call it each iteration
-            .callbacks(VizCallback)
         )
-
-        analysis = ray.tune.run(
-            "PPO",
-            config=marl_config.to_dict(),
-            stop={"training_iteration": self.config["marl_steps_per_phase"]},
-            checkpoint_at_end=True,
-        )
-        print("Trial errors:", analysis.errors)
-        return analysis
-        # Add this after tune.run()        
-    # def _execute_marl_phase(self, initial_policy: Dict = None):
-    #     """Execute MARL training phase"""
-    #     # print(f"\n Starting {self.config['marl_algorithm'].upper()} training...")
-    #     print(f"\n Starting {self.config.get('marl_algorithm', 'PPO').upper()} training...")
-    #     # Configure environment with current network state
-    #     # Extract initial solution safely
-    #     initial_weights = []
-    #     if initial_policy is not None:
-    #         initial_weights = initial_policy.tolist()  # ✅ Correct extraction
-    #         assert len(initial_weights) == self.config["env_config"]["num_ue"]
+        
+        # Clean up previous algorithm if exists
+        if self.algo is not None:
+            self.algo.stop()
             
-    #     env_config = {
-    #         **self.config["env_config"]            
-    #     }
+        # Build new algorithm
+        self.algo = marl_config.build()
         
+    def _execute_marl_phase(self, initial_policy: dict = None, phase_name: str = "hybrid"):
+        print(f"\nStarting {self.config.get('marl_algorithm','PPO').upper()} training ({phase_name})...")
         
-    #     # MARL configuration
-    #     # MARL configuration
-    #     marl_config = (
-    #         PPOConfig()
-    #         .environment(
-    #             "NetworkEnv",
-    #             env_config=env_config
-    #         )
-    #         .training(
-    #             model={
-    #                 "custom_model": "meta_policy",
-    #                 "custom_model_config": {
-    #                     "initial_weights": initial_weights,
-    #                     "num_bs": self.config["env_config"]["num_bs"],
-    #                     "num_ue": self.config["env_config"]["num_ue"]
-    #                 }
-    #             },
-                
-    #             gamma=0.99,
-    #             lr=0.0005,  # Slightly higher learning rate
-    #             lr_schedule=[(0, 0.00005), (1000, 0.0001), (10000, 0.0005)],  # Gradual lr increase
-    #             entropy_coeff=0.01,  # Add exploration
-    #             kl_coeff=0.2,
-    #             train_batch_size=4000,
-    #             sgd_minibatch_size=128,
-    #             num_sgd_iter=10,
-    #             clip_param=0.2,
-    #         ).env_runners(
-    #         sample_timeout_s=3600, # 600,  # Increase from default (180s) to 10 minutes
-    #         rollout_fragment_length=25 # 50  # Decrease from default (200) to collect samples faster
-    #             )
-    #         .multi_agent(
-    #             policies={
-    #                 f"ue_{i}": (None, self.obs_space[f"ue_{i}"], self.act_space[f"ue_{i}"], {})
-    #                 for i in range(self.config["env_config"]["num_ue"])
-    #             },
-    #             policy_mapping_fn=lambda agent_id, episode=None, worker=None, **kwargs: agent_id
-    #         )
-    #     )
+        # Build/rebuild algorithm with new initial policy
+        self._build_algorithm(initial_policy)
         
-    #     analysis = ray.tune.run(
-    #         "PPO",
-    #         config=marl_config.to_dict(),
-    #         stop={"training_iteration": self.config["marl_steps_per_phase"]},
-    #         checkpoint_at_end=True,
-    #         callbacks=[self._create_marl_callback()]
-    #     )
-    #     print("Trial errors:", analysis.errors)
-    #     return analysis
-    #     # Add this after tune.run()
+        # Training metrics storage
+        training_results = []
+        best_reward = float('-inf')
         
+        # Training loop using algo.train()
+        for iteration in range(self.config["marl_steps_per_phase"]):
+            # Single training step
+            result = self.algo.train()
+            training_results.append(result)
+            
+            # Extract key metrics
+            episode_reward_mean = result.get("env_runners", {}).get("episode_reward_mean", 0)
+            episode_len_mean = result.get("env_runners", {}).get("episode_len_mean", 0)
+            learner = result.get("info", {}).get("learner", {})
 
-    def _create_marl_callback(self):
-        """Create a Ray Tune callback for tracking training progress"""
-        
-        class MALRCallback(ray.tune.Callback):
-            def __init__(self, parent):
-                self.parent = parent
-                
-            def on_trial_result(self, iteration, trials, trial, result, **info):
-                # Get the actual reward values from result dictionary
-                reward_mean = result.get("env_runners/episode_return_mean", 0)
-                reward_min = result.get("env_runners/episode_return_min", 0)
-                reward_max = result.get("env_runners/episode_return_max", 0)
-                episode_len = result.get("env_runners/episode_len_mean", 0)
+            policy_losses = []
+            vf_losses = []
 
-                print(f"[Trial {trial.trial_id}] Iter {result['training_iteration']} | "
-                    f"Reward: {reward_mean:.3f} | "  # Use the correctly retrieved value
-                    f"Length: {episode_len:.1f}")
-                
-                if self.parent.kpi_logger and self.parent.kpi_logger.enabled:
-                    metrics = {
-                        "iteration": self.parent.current_epoch * self.parent.config["marl_steps_per_phase"] + 
-                                result["training_iteration"],
-                        "reward_mean": reward_mean,  # Use the correctly retrieved value
-                        "reward_min": reward_min, 
-                        "reward_max": reward_max,
-                        "episode_length": episode_len
+            for policy_id, stats in learner.items():
+                learner_stats = stats.get("learner_stats", {})
+                policy_losses.append(learner_stats.get("policy_loss", 0.0))
+                vf_losses.append(learner_stats.get("vf_loss", 0.0))
+
+            policy_loss = sum(policy_losses) / len(policy_losses) if policy_losses else 0.0
+            vf_loss = sum(vf_losses) / len(vf_losses) if vf_losses else 0.0
+
+            
+            # policy_loss = result.get("info", {}).get("learner", {}).get("default_policy", {}).get("learner_stats", {}).get("policy_loss", 0)
+            # vf_loss = result.get("info", {}).get("learner", {}).get("default_policy", {}).get("learner_stats", {}).get("vf_loss", 0)
+            
+            # Log detailed metrics to KPI Logger
+            if hasattr(self, 'kpi_logger'):
+                self.kpi_logger.log_iteration(
+                    epoch=getattr(self, 'current_epoch', 0),
+                    iteration=iteration,
+                    phase=phase_name,
+                    metrics={
+                        "iteration": iteration,
+                        "episode_reward_mean": episode_reward_mean,
+                        "episode_len_mean": episode_len_mean,
+                        "policy_loss": policy_loss,
+                        "vf_loss": vf_loss,
+                        "episodes_this_iter": result.get("env_runners", {}).get("episodes_this_iter", 0),
+                        "timesteps_total": result.get("timesteps_total", 0)
                     }
-                    
-                    self.parent.kpi_logger.log_metrics(
-                        phase="marl",
-                        algorithm="PPO",
-                        metrics=metrics,
-                        episode=result.get("training_iteration", 0)
-                    )
+                )
+            
+            # Log progress
+            if iteration % 5 == 0 or iteration == self.config["marl_steps_per_phase"] - 1:
+                print(f"  Iteration {iteration + 1}/{self.config['marl_steps_per_phase']}: "
+                    f"Reward={episode_reward_mean:.2f}, "
+                    f"Episode Length={episode_len_mean:.1f}, "
+                    f"Policy Loss={policy_loss:.4f}")
+                self.kpi_logger.save_to_csv()
+            
+            # Track best performance
+            if episode_reward_mean > best_reward:
+                best_reward = episode_reward_mean
                 
-        return MALRCallback(self)
-    
-
-    def _adaptive_retuning_required(self) -> bool:
-        """Check if metaheuristic retuning is needed"""
-        metrics = self.kpi_logger.get_recent_metrics(
-            window_size=self.config["adaptive_tuning"]["stagnation_window"]
-        )
-        return (np.mean(metrics["reward"]) < 
-                self.config["adaptive_tuning"]["stagnation_threshold"])
-
-    def _compare_algorithms(self) -> Dict:
-        """Run and compare multiple metaheuristics"""
-        algorithm_results = {}
+            # Optional: Early stopping based on performance
+            if (self.config.get("early_stopping", {}).get("enabled", False) and
+                iteration > self.config.get("early_stopping", {}).get("min_iterations", 20)):
+                
+                recent_rewards = [r.get("env_runners", {}).get("episode_reward_mean", 0) 
+                                for r in training_results[-10:]]
+                if len(recent_rewards) >= 10:
+                    improvement = max(recent_rewards) - min(recent_rewards)
+                    if improvement < self.config.get("early_stopping", {}).get("threshold", 0.01):
+                        print(f"  Early stopping at iteration {iteration + 1} due to convergence")
+                        break
         
-        for algo in self.config["metaheuristic_algorithms"]:
-            self.env.reset()
-            algorithm_results[algo] = self._execute_metaheuristic_phase(algo)
-            time.sleep(1)  # Pause for visualization clarity
-        # Create animator from logged history
-        # List the metrics you want to animate
-        metrics = ['fitness', 'average_sinr', 'fairness']
-
-        # Loop over each metric to create, show, and save its animation separately
-        for metric in metrics:
-            # Create a MetricAnimator instance for the current metric
-            animator = MetricAnimator(
-                df=self.kpi_logger.history,
-                metrics=[metric],  # Only process one metric at a time
-                fps=8  # Lower FPS for slower progression
+        # Log phase summary to KPI Logger
+        if hasattr(self, 'kpi_logger'):
+            self.kpi_logger.log_phase_summary(
+                epoch=getattr(self, 'current_epoch', 0),
+                phase=phase_name,
+                summary={
+                    "iterations_completed": len(training_results),
+                    "best_reward": best_reward,
+                    "final_reward": training_results[-1].get("env_runners", {}).get("episode_reward_mean", 0),
+                    "convergence_rate": (best_reward - training_results[0].get("env_runners", {}).get("episode_reward_mean", 0)) / len(training_results) if training_results else 0,
+                    "total_timesteps": sum(r.get("timesteps_total", 0) for r in training_results)
+                }
             )
-            animator.animate()           # Build the animation for this metric
-            animator.show()              # Render it inline in Jupyter/Colab
-            animator.save_videos("results/separated_metrics")
-        # animator = MetricAnimator(
-        #     df=self.kpi_logger.history,
-        #     metrics=['fitness'],#, ', 'average_sinr','fairness'
-        #     fps=8  # Lower FPS for slower progression
-        # )
-        # animator.animate()
-        # # For Jupyter
-        # # Save to separate files
-        # animator.show()
-        # animator.save_videos("results/separated_metrics")
         
-
-        # For video export
-        # animator.save_videos("results/training_progression.mp4")  
-        # Save to separate files
+        # Log final policy distribution
+        # print("Final policy distribution after MARL phase:")
+        # Note: This will show the temp_env distribution, but actual training envs
+        # will have their own mobility patterns
         
-        # self.dashboard.display_comparison_matrix(algorithm_results)
-        return algorithm_results
-
-    def run(self):
-        # """Main training orchestration"""
-        try:
+        # Return summary of training
+        final_stats = {
+            "iterations_completed": len(training_results),
+            "best_reward": best_reward,
+            "final_reward": training_results[-1].get("env_runners", {}).get("episode_reward_mean", 0),
+            "training_results": training_results,
+            "algorithm": self.algo  # Return algorithm instance for potential checkpoint saving
+        }
+        
+        return final_stats
+    
+    def _save_checkpoint(self, epoch: int):
+        """Save algorithm checkpoint"""
+        if self.algo is not None:
+            checkpoint_path = f"{self.config['checkpointdir']}/epoch{epoch}_marl"
+            self.algo.save_checkpoint(checkpoint_path)
+            print(f"MARL checkpoint saved to {checkpoint_path}")
+            return checkpoint_path
+        return None
+    
+    def _restore_checkpoint(self, checkpoint_path: str):
+        """Restore algorithm from checkpoint"""
+        if self.algo is not None:
+            self.algo.restore(checkpoint_path)
+            print(f"MARL checkpoint restored from {checkpoint_path}")
+    
+    def _execute_baseline_marl(self):
+        """Execute baseline MARL training without metaheuristic initialization"""
+        print("\n" + "="*50)
+        print("BASELINE MARL TRAINING (No Hybrid)")
+        print("="*50)
+        
+        # Use random or default initialization
+        baseline_results = self._execute_marl_phase(
+            initial_policy=None,  # No metaheuristic initialization
+            phase_name="baseline_marl"
+        )
+        
+        return baseline_results
+    
+    def run_comparison_study(self):
+        """Run both hybrid and baseline approaches for comparison"""
+        comparison_results = {
+            "hybrid": [],
+            "baseline": []
+        }
+        
+        num_runs = self.config.get("comparison_runs", 3)
+        
+        for run in range(num_runs):
+            print(f"\n{'='*60}")
+            print(f"COMPARISON RUN {run + 1}/{num_runs}")
+            print(f"{'='*60}")
+            
+            # # Initialize fresh KPI logger for this run
+            # if hasattr(self, 'kpi_logger'):
+            #     self.kpi_logger.start_new_run(run, "comparison")
+            
+            # Run baseline MARL first
+            print(f"\n--- BASELINE MARL (Run {run + 1}) ---")
+            baseline_result = self._execute_baseline_marl()
+            comparison_results["baseline"].append(baseline_result)
+            
+            # Reset algorithm and environment state
+            if self.algo is not None:
+                self.algo.stop()
+                self.algo = None
+            
+            # Run hybrid approach
+            print(f"\n--- HYBRID APPROACH (Run {run + 1}) ---")
+            
+            # Get initial solution from metaheuristic
             if self.config["comparison_mode"]:
                 algorithm_results = self._compare_algorithms()
                 best_algorithm = max(
                     algorithm_results,
                     key=lambda x: algorithm_results[x]["metrics"]["fitness"]
                 )
-                print(f"\n Best algorithm selected: {best_algorithm.upper()}")
                 initial_solution = algorithm_results[best_algorithm]
             else:
-                # initial_solution = self._execute_metaheuristic_phase(
-                #     self.config["metaheuristic"]
-                # )
-                # Run metaheuristic phase only if not already done
+                initial_solution = self._execute_metaheuristic_phase(
+                    self.config["metaheuristic"]
+                )
+            
+            # Execute hybrid MARL phase
+            hybrid_result = self._execute_marl_phase(
+                initial_policy=initial_solution.get("solution"),
+                phase_name="hybrid_marl"
+            )
+            comparison_results["hybrid"].append(hybrid_result)
+            
+            # # Log comparison for this run
+            # if hasattr(self, 'kpi_logger'):
+            #     self.kpi_logger.log_comparison(
+            #         run=run,
+            #         baseline_performance=baseline_result["best_reward"],
+            #         hybrid_performance=hybrid_result["best_reward"],
+            #         improvement=(hybrid_result["best_reward"] - baseline_result["best_reward"]) / baseline_result["best_reward"] * 100
+            #     )
+        
+        # Analyze and report comparison results
+        self._analyze_comparison_results(comparison_results)
+        
+        return comparison_results
+    
+    def _analyze_comparison_results(self, results):
+        """Analyze and report comparison between hybrid and baseline approaches"""
+        import numpy as np
+        
+        baseline_rewards = [r["best_reward"] for r in results["baseline"]]
+        hybrid_rewards = [r["best_reward"] for r in results["hybrid"]]
+        
+        
+        baseline_convergence = [r["iterations_completed"] for r in results["baseline"]]
+        hybrid_convergence = [r["iterations_completed"] for r in results["hybrid"]]
+        
+        print(f"\n{'='*60}")
+        print("COMPARISON ANALYSIS RESULTS")
+        print(f"{'='*60}")
+        
+        baseline_mean=np.mean(baseline_rewards)
+        baseline_std=np.std(baseline_rewards)
+        hybrid_mean=np.mean(hybrid_rewards)
+        hybrid_std=np.std(hybrid_rewards)
+        
+        baseline_iterations=np.mean(baseline_convergence)
+        hybrid_iterations=np.mean(hybrid_convergence)
+        
+        print(f"\nPerformance Comparison ({len(baseline_rewards)} runs):")
+        print(f"Baseline MARL:")
+        print(f"  Mean Reward: {np.mean(baseline_rewards):.2f} ± {np.std(baseline_rewards):.2f}")
+        print(f"  Best Reward: {np.max(baseline_rewards):.2f}")
+        print(f"  Worst Reward: {np.min(baseline_rewards):.2f}")
+        
+        print(f"\nHybrid Approach:")
+        print(f"  Mean Reward: {np.mean(hybrid_rewards):.2f} ± {np.std(hybrid_rewards):.2f}")
+        print(f"  Best Reward: {np.max(hybrid_rewards):.2f}")
+        print(f"  Worst Reward: {np.min(hybrid_rewards):.2f}")
+        
+        improvement = ((np.mean(hybrid_rewards) - np.mean(baseline_rewards)) / np.mean(baseline_rewards)) * 100
+        print(f"\nHybrid Improvement: {improvement:.2f}%")
+        
+        print(f"\nConvergence Comparison:")
+        print(f"Baseline Iterations: {np.mean(baseline_convergence):.1f} ± {np.std(baseline_convergence):.1f}")
+        print(f"Hybrid Iterations: {np.mean(hybrid_convergence):.1f} ± {np.std(hybrid_convergence):.1f}")
+        
+        # Statistical significance test (simple t-test)
+        from scipy import stats
+        try:
+            t_stat, p_value = stats.ttest_rel(hybrid_rewards, baseline_rewards)
+            print(f"\nStatistical Significance:")
+            print(f"T-statistic: {t_stat:.3f}")
+            print(f"P-value: {p_value:.3f}")
+            print(f"Significant at α=0.05: {'Yes' if p_value < 0.05 else 'No'}")
+        except ImportError:
+            print("\nInstall scipy for statistical significance testing")
+        
+        # Win rate
+        wins = sum(1 for h, b in zip(hybrid_rewards, baseline_rewards) if h > b)
+        win_rate = wins / len(hybrid_rewards) * 100
+        print(f"\nHybrid Win Rate: {win_rate:.1f}% ({wins}/{len(hybrid_rewards)} runs)")
+        
+        # Training progress over iterations
+        # 1. Learning Curves Comparison (Fixed)
+        plt.subplot(2, 3, 1)
+        x_baseline = range(len(baseline_rewards))
+        x_hybrid = range(len(hybrid_rewards))
+        plt.plot(x_baseline, baseline_rewards, 'o-', label='Baseline MARL', alpha=0.7)
+        plt.plot(x_hybrid, hybrid_rewards, 's-', label='Hybrid Approach', alpha=0.7)
+        # Add confidence intervals if we have multiple runs
+        if len(baseline_rewards) > 1:
+            plt.axhline(y=baseline_mean, color='blue', linestyle='--', alpha=0.5)
+            plt.axhline(y=hybrid_mean, color='orange', linestyle='--', alpha=0.5)
+        plt.xlabel('Run Number')
+        plt.ylabel('Best Episode Reward')
+        plt.title('Performance Across Runs')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        #  Performance Distribution (Box Plots)        
+        # 2. Performance Distribution (Box Plots)        
+        plt.subplot(2, 3, 2)
+        data = [baseline_rewards, hybrid_rewards]
+        box_plot = plt.boxplot(data, labels=['Baseline\nMARL', 'Hybrid\nApproach'], patch_artist=True)
+        # Color the boxes
+        box_plot['boxes'][0].set_facecolor('lightblue')
+        box_plot['boxes'][1].set_facecolor('lightcoral')
+        plt.ylabel('Final Performance')
+        plt.title('Performance Distribution')
+        plt.grid(True, alpha=0.3)
+        
+        # 3. Convergence Speed Analysis
+        plt.subplot(2, 3, 3)
+        plt.scatter(baseline_convergence, baseline_rewards, 
+                alpha=0.6, label='Baseline', s=60, c='blue')
+        plt.scatter(hybrid_convergence, hybrid_rewards, 
+                alpha=0.6, label='Hybrid', s=60, c='red')
+        plt.xlabel('Iterations to Convergence')
+        plt.ylabel('Final Reward')
+        plt.title('Convergence Speed vs Performance')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        #Statistical Significance Visualization
+        plt.subplot(2, 2, 4)
+        # Paired comparison plot
+        for i in range(len(baseline_rewards)):
+            plt.plot([1, 2], [baseline_rewards[i], hybrid_rewards[i]], 
+                    'o-', alpha=0.5, color='gray')
+        plt.plot([1, 2], [np.mean(baseline_rewards), np.mean(hybrid_rewards)], 
+                'o-', linewidth=3, markersize=10, color='red')
+        plt.xticks([1, 2], ['Baseline', 'Hybrid'])
+        plt.ylabel('Performance')
+        plt.title('Paired Comparison (Each Line = One Run)')
+        
+        # 5. Improvement Histogram
+        plt.subplot(2, 3, 5)
+        improvements = [(h-b)/b*100 for h, b in zip(hybrid_rewards, baseline_rewards)]
+        plt.hist(improvements, bins=min(10, len(improvements)), alpha=0.7, 
+                edgecolor='black', color='green')
+        plt.xlabel('Improvement (%)')
+        plt.ylabel('Frequency')
+        plt.title('Distribution of Improvements')
+        plt.axvline(0, color='red', linestyle='--', label='No Improvement', linewidth=2)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # 6. Summary Statistics
+        plt.subplot(2, 3, 6)
+        categories = ['Mean\nReward', 'Max\nReward', 'Min\nReward', 'Std\nReward']
+        baseline_stats = [baseline_mean, np.max(baseline_rewards), 
+                        np.min(baseline_rewards), baseline_std]
+        hybrid_stats = [hybrid_mean, np.max(hybrid_rewards), 
+                    np.min(hybrid_rewards), hybrid_std]
+        
+        x_pos = np.arange(len(categories))
+        width = 0.35
+        
+        plt.bar(x_pos - width/2, baseline_stats, width, label='Baseline', 
+                color='lightblue', alpha=0.8)
+        plt.bar(x_pos + width/2, hybrid_stats, width, label='Hybrid', 
+                color='lightcoral', alpha=0.8)
+        
+        plt.xlabel('Metrics')
+        plt.ylabel('Values')
+        plt.title('Statistical Summary')
+        plt.xticks(x_pos, categories)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        
+        if not hasattr(self, 'kpi_logger') or not hasattr(self.kpi_logger, 'history'):
+            print("No KPI logger history found.")
+            return
+
+        # Aggregate data by phase
+        metrics_by_phase = defaultdict(lambda: {
+            "reward": [],
+            "policy_loss": [],
+            "vf_loss": [],
+            "timestamps": [],
+            "iterations": []
+        })
+
+        for entry in self.kpi_logger.history:
+            phase = entry.get("phase", "unknown")
+            metrics = entry.get("metrics", {})
+            metrics_by_phase[phase]["reward"].append(metrics.get("episode_reward_mean", 0))
+            metrics_by_phase[phase]["policy_loss"].append(metrics.get("policy_loss", 0))
+            metrics_by_phase[phase]["vf_loss"].append(metrics.get("vf_loss", 0))
+            metrics_by_phase[phase]["iterations"].append(entry.get("iteration", 0))
+            metrics_by_phase[phase]["timestamps"].append(entry.get("timestamp", 0))
+
+        plt.figure(figsize=(12, 8))
+
+        # 1. Training Efficiency Plot
+        plt.subplot(2, 2, 1)
+        for phase, data in metrics_by_phase.items():
+            # Convert timestamps to relative minutes
+            start_time = data["timestamps"][0]
+            times_minutes = [(t - start_time).total_seconds() / 60.0 for t in data["timestamps"]]
+            cumulative_rewards = np.cumsum(data["reward"])
+            plt.plot(times_minutes, cumulative_rewards, label=f'{phase.capitalize()}', alpha=0.7)
+        plt.xlabel('Training Time (minutes)')
+        plt.ylabel('Cumulative Reward')
+        plt.title('Training Efficiency')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+
+        # 2. Policy Loss Convergence
+        plt.subplot(2, 2, 2)
+        for phase, data in metrics_by_phase.items():
+            plt.plot(data["iterations"], data["policy_loss"], label=f'{phase.capitalize()} Policy Loss', alpha=0.7)
+        plt.xlabel('Iteration')
+        plt.ylabel('Policy Loss')
+        plt.title('Policy Learning Stability')
+        plt.yscale('log')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+
+        # 3. Value Function Loss (optional extra)
+        plt.subplot(2, 2, 3)
+        for phase, data in metrics_by_phase.items():
+            plt.plot(data["iterations"], data["vf_loss"], label=f'{phase.capitalize()} VF Loss', alpha=0.7)
+        plt.xlabel('Iteration')
+        plt.ylabel('Value Function Loss')
+        plt.title('VF Loss Convergence')
+        plt.yscale('log')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+
+        
+        return {
+            "baseline_mean": np.mean(baseline_rewards),
+            "hybrid_mean": np.mean(hybrid_rewards),
+            "improvement_percent": improvement,
+            "win_rate": win_rate,
+            "statistical_significant": p_value < 0.05 if 'p_value' in locals() else None
+        }
+    
+        
+    def run(self, mode="hybrid"):
+        """
+        Main training loop with multiple modes
+        
+        Args:
+            mode: "hybrid" for hybrid training, "baseline" for MARL only, 
+                  "comparison" for running both approaches
+        """
+        if mode == "comparison":
+            return self.run_comparison_study()
+        elif mode == "baseline":
+            return self._execute_baseline_marl()
+        
+        # Default hybrid mode
+        try:
+            # Initial metaheuristic phase (your existing code)
+            if self.config["comparison_mode"]:
+                algorithm_results = self._compare_algorithms()
+                best_algorithm = max(
+                    algorithm_results,
+                    key=lambda x: algorithm_results[x]["metrics"]["fitness"]
+                )
+                print(f"\nBest algorithm selected: {best_algorithm.upper()}")
+                initial_solution = algorithm_results[best_algorithm]
+            else:
                 if self.metaheuristic_runs < self.max_metaheuristic_runs:
                     initial_solution = self._execute_metaheuristic_phase(
                         self.config["metaheuristic"]
                     )
-                    self.metaheuristic_runs += 1
+                    self.metaheuristic_runs += 1                
                 print(f"Initial Solution is : {initial_solution}")
+            
             # Hybrid training loop
             current_phase = "marl"
-            print(f"\n Current phase: {current_phase}")
+            print(f"\nCurrent phase: {current_phase}")
             
             for epoch in range(1, self.config["max_epochs"] + 1):
                 self.current_epoch = epoch
+                print(f"\n=== EPOCH {epoch} ===")
+                
                 if current_phase == "metaheuristic":
                     initial_solution = self._execute_metaheuristic_phase(
                         self.config["metaheuristic"]
@@ -679,38 +919,70 @@ class HybridTraining:
                     print(f"Initial Solution is : {initial_solution}")
                     current_phase = "marl"
                 
-                # Execute MARL phase
-                analysis = self._execute_marl_phase(
-                    initial_policy=initial_solution.get("solution")
+                # Execute MARL phase with direct algorithm control
+                marl_results = self._execute_marl_phase(
+                    initial_policy=initial_solution.get("solution"),
+                    phase_name="hybrid_marl"
                 )
                 
-                # Log hybrid performance
-                self.kpi_logger.log_epoch(
-                    epoch=epoch,
-                    marl_metrics=analysis.stats(),
-                    metaheuristic_metrics=initial_solution["metrics"]
-                )
+                # Log hybrid performance (epoch-level summary)
+                if hasattr(self, 'kpi_logger'):
+                    self.kpi_logger.log_epoch(
+                        epoch=epoch,
+                        marl_metrics={
+                            "best_reward": marl_results["best_reward"],
+                            "final_reward": marl_results["final_reward"],
+                            "iterations": marl_results["iterations_completed"]
+                        },
+                        metaheuristic_metrics=initial_solution["metrics"]
+                    )
                 
                 # Adaptive phase switching
-                if (self.config["adaptive_tuning"]["enabled"] and 
-                    self._adaptive_retuning_required()):
-                    print("\n Performance stagnation detected - triggering retuning")
+                if (self.config["adaptive_tuning"]["enabled"] and
+                     self._adaptive_retuning_required()):
+                    print("\nPerformance stagnation detected - triggering retuning")
                     current_phase = "metaheuristic"
                 
-                # Save system state
+                # Save system state and checkpoints
                 if epoch % self.config["checkpoint_interval"] == 0:
+                    # Save environment checkpoint
                     self.env.save_checkpoint(
-                        f"{self.config['checkpoint_dir']}/epoch_{epoch}.pkl"
+                        f"{self.config['checkpointdir']}/epoch{epoch}.pkl"
                     )
-
+                    # Save MARL algorithm checkpoint
+                    self._save_checkpoint(epoch)
+                    
+        except Exception as e:
+            print(f"Training failed: {e}")
+            raise
         finally:
-           # self.dashboard.finalize_visualizations()
-            self.kpi_logger.generate_final_reports()
-            ray.shutdown()
-
-
-if __name__ == "__main__":
+            # Clean up algorithm resources
+            if self.algo is not None:
+                self.algo.stop()
+                print("Algorithm resources cleaned up")
     
+    def evaluate_policy(self, num_episodes: int = 10):
+        """Evaluate current policy performance"""
+        if self.algo is None:
+            print("No algorithm available for evaluation")
+            return None
+            
+        print(f"Evaluating policy over {num_episodes} episodes...")
+        
+        # You can implement custom evaluation logic here
+        # For now, just return recent training performance
+        # In practice, you'd run the policy on test environments
+        
+        eval_results = {
+            "episodes": num_episodes,
+            "mean_reward": "TBD - implement evaluation logic",
+            "std_reward": "TBD - implement evaluation logic"
+        }
+        
+        return eval_results
+
+
+if __name__ == "__main__":    
     config = {
         # Core configuration
         "metaheuristic": "pfo",
@@ -720,26 +992,30 @@ if __name__ == "__main__":
         
         # Environment parameters
         "env_config": {
-            "num_bs": 3,
-            "num_ue": 60,
-            "episode_length": 10,
+            "num_bs": 4,
+            "num_ue": 10,
+            "episode_length": 30,
             "log_kpis": True
         },
         
-                        
-        # Training parameters
-        "max_epochs": 50,
-        "marl_steps_per_phase": 1,
-        "checkpoint_interval": 10,
-        "checkpoint_dir": "results/checkpoints",
+        "marl_steps_per_phase": 10,
+        "max_epochs": 10,
+        "checkpoint_interval": 5,
+        "checkpointdir": "./checkpoints",
+        "comparison_runs": 1,  # Number of runs for statistical comparison
+        "early_stopping": {
+            "enabled": True,
+            "min_iterations": 30,
+            "threshold": 0.01
+        },
         
         # Resource management
         "ray_resources": {
             "num_cpus": 8,
-            "num_gpus": 0,
+            "num_gpus": 1,
             },
         "marl_training": {
-        "num_gpus": 0  #  GPUs allocated to MARL
+        "num_gpus": 1  #  GPUs allocated to MARL
         },
         # Visualization parameters
         "visualization": {
@@ -750,7 +1026,7 @@ if __name__ == "__main__":
         
         # Adaptive control
         "adaptive_tuning": {
-            "enabled": True,
+            "enabled": False,
             "stagnation_threshold": -50,
             "stagnation_window": 10
         },
@@ -762,5 +1038,6 @@ if __name__ == "__main__":
         }
     }
 
-    orchestrator = HybridTraining(config)
-    orchestrator.run()
+    trainer = HybridTraining(config)
+    trainer.run()
+    # comparison_results = trainer.run(mode="comparison")

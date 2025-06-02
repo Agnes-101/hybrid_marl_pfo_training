@@ -159,7 +159,7 @@ class CheetahOptimization:
         self,
         env: NetworkEnvironment,
         iterations: int = 20,
-        cheetahs: int = 60,
+        cheetahs: int = 30,
         sprint_prob: float = 0.6,
         rest_threshold: float = 0.3,
         acceleration: float = 1.2,

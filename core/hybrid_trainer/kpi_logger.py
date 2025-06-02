@@ -143,15 +143,37 @@ class KPITracker:
             'algorithms': recent['algorithm'].tolist()
         }
 
+    # def save_to_csv(self, base_path: str = "results"):
+    #     """Persist KPI history and summaries to CSV files."""
+    #     if not self.enabled:
+    #         return
+    #     # Ensure directory exists
+    #     import os
+    #     os.makedirs(base_path, exist_ok=True)
+    #     self.history.to_csv(os.path.join(base_path, "marl_iterations.csv"), index=False)
+    #     self.phase_summary.to_csv(os.path.join(base_path, "marl_phase_summary.csv"), index=False)
+    
     def save_to_csv(self, base_path: str = "results"):
         """Persist KPI history and summaries to CSV files."""
         if not self.enabled:
             return
-        # Ensure directory exists
-        import os
-        os.makedirs(base_path, exist_ok=True)
-        self.history.to_csv(os.path.join(base_path, "marl_iterations.csv"), index=False)
-        self.phase_summary.to_csv(os.path.join(base_path, "marl_phase_summary.csv"), index=False)
+        
+        try:
+            # Ensure directory exists
+            import os
+            os.makedirs(base_path, exist_ok=True)
+            
+            # Save with error handling
+            history_path = os.path.join(base_path, "marl_iterations.csv")
+            summary_path = os.path.join(base_path, "marl_phase_summary.csv")
+            
+            self.history.to_csv(history_path, index=False)
+            self.phase_summary.to_csv(summary_path, index=False)
+            
+            print(f"Files saved to: {os.path.abspath(base_path)}")
+            
+        except Exception as e:
+            print(f"Error saving CSV files: {e}")
 
     def get_algorithm_comparison(self) -> dict:
         """Aggregate metrics for algorithm comparison view"""
@@ -193,7 +215,7 @@ class KPITracker:
         df = pd.DataFrame(self.algorithm_logs)
         df.to_csv("results/algorithm_performance.csv", index=False)
         
-        
+      
 
             
 

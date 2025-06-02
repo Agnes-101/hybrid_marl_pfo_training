@@ -708,71 +708,7 @@ class BaseStation:
         #     print("-----------------------------------")
         
         return self.capacity
-    # def calculate_capacity_rb_based(self, sample_points=500, overhead_factor=0.8):
-    #     """Use tier-appropriate capacity models"""
-    #     if self.reuse_color == "Macro":
-    #         # For macro: statistical model based on typical macro cell performance
-    #         # This adjusts for the lack of neighboring macro cells
-            
-    #         # 1) Area: π·r² where r is effective coverage radius
-    #         coverage_radius = 750.0  # meters (typical half-ISD)
-    #         coverage_area = np.pi * coverage_radius**2  # m²
-            
-    #         # 2) Average spectral efficiency from empirical studies
-    #         # Typically 1.5-3 bps/Hz for macro cells with modern technology
-    #         avg_spectral_efficiency = 2.5  # bps/Hz
-            
-    #         # 3) Apply bandwidth and overhead factors
-    #         total_bps = avg_spectral_efficiency * self.bandwidth * overhead_factor
-            
-    #         # 4) Cell capacity (bps)
-    #         self.capacity = total_bps / 1e6  # Convert to Mbps
-    #     else:
-    #         # For small cells: use your existing detailed calculation
-    #         total_se = 0.0
-    #         # 1) Determine a coverage radius
-    #         if len(self.base_stations) == 1:
-    #             # fallback radii: macro vs. small cell
-    #             cell_radius = 1000.0 if self.reuse_color == "Macro" else 100.0
-    #         else:
-    #             cell_radius = max(
-    #                     np.linalg.norm(bs.position - self.position)
-    #                     for bs in self.base_stations
-    #                 )
-
-    #             # 2) Cap instantaneous SINR at 30 dB (≈1000 linear)
-    #         max_sinr_db = 30.0
-    #         sinr_cap    = 10 ** (max_sinr_db / 10)
-
-    #             # 3) Uniform‐disk sampling
-    #         for _ in range(sample_points):
-    #             u     = np.random.rand()          # uniform [0,1)
-    #             r     = np.sqrt(u) * cell_radius  # uniform area
-    #             theta = np.random.rand() * 2 * np.pi
-    #             dx, dy = r * np.cos(theta), r * np.sin(theta)
-    #             sample_point = self.position + np.array([dx, dy], dtype=np.float32)
-
-    #             # 4) Compute desired & cross‐tier interference + noise
-    #             prx   = self.received_power_mW(sample_point)
-    #             interf = sum(
-    #                     other.received_power_mW(sample_point)
-    #                     for other in self.base_stations
-    #                     if other.id != self.id
-    #                 )
-    #             noise = self.noise_mW()
-
-    #             sinr = min(prx / (interf + noise + 1e-12), sinr_cap)
-    #             total_se += np.log2(1 + sinr)
-
-    #             # 5) From average spectral efficiency to capacity
-    #             avg_se    = total_se / sample_points       # bits/s/Hz
-    #             rb_cap    = self.rb_bandwidth * avg_se     # bits/s per RB
-    #             total_bps = rb_cap * self.num_rbs * overhead_factor
-
-    #             # Mbps, with a guardrail at 10 Gbps (for modest BW)
-    #             self.capacity = min(total_bps / 1e6, 1e4)
-    #             return self.capacity
-                
+    
     def snr_per_rb(self, ue):
         sinr_rb = np.empty(self.num_rbs, dtype=np.float32)
         noise_rb = self.noise_mW()
@@ -914,7 +850,7 @@ class NetworkEnvironment(MultiAgentEnv):
         # Return the center followed by the optimally placed small cells
         return positions + remaining_positions[:num_bs-1]
     
-    def __init__(self, config:EnvContext, log_kpis=True):        
+    def __init__(self, config:EnvContext, log_kpis=True,seed=None):        
         super().__init__()  # ✅ Initialize gym.Env
         self.config = config
         # Define observation space first
@@ -928,11 +864,12 @@ class NetworkEnvironment(MultiAgentEnv):
         self.current_step = 0
         self.log_kpis = log_kpis        
         self.metaheuristic_agents = []  # Initialize empty list 
-        self.seed = 42
+        self.seed = seed if seed is not None else 42
         if self.seed is not None:
             np.random.seed(self.seed)
             
-        self.step_count       = 0        
+        self.step_count = 0 
+        self.episode_counter = 0       
         self.base_stations = []
         # Calculating hexagonal positions for BS             
         
@@ -1037,7 +974,8 @@ class NetworkEnvironment(MultiAgentEnv):
         # Initialize KPI logger if logging is enabled
         self.kpi_logger = KPITracker() if log_kpis else None        
         # obs_dim = 3*self.num_bs + 1 + (self.num_bs + 1) # SINRs + BS loads + BS Utilizations + own demand + Connected
-        obs_dim = 3*self.num_bs + 3 + (self.num_bs + 1)
+        # obs_dim = 3*self.num_bs + 3 + (self.num_bs + 1)
+        obs_dim = 2*self.num_bs + 2
         self.observation_space = gym.spaces.Dict({
             f"ue_{i}": gym.spaces.Box(
                 low=-np.inf, high=np.inf,
@@ -1046,9 +984,8 @@ class NetworkEnvironment(MultiAgentEnv):
             for i in range(self.num_ue)
         })
 
-
         self.action_space = gym.spaces.Dict({
-            f"ue_{i}": gym.spaces.Discrete(self.num_bs + 1)
+            f"ue_{i}": gym.spaces.Discrete(self.num_bs)
             for i in range(self.num_ue)
         })
 
@@ -1173,7 +1110,51 @@ class NetworkEnvironment(MultiAgentEnv):
         infos = {f"ue_{i}": {} for i in range(self.num_ue)}
         return obs, infos
         # return self._get_obs()# , {}
+        
+    def bc_reset(self, seed= None, options=None):
+        # If the user passed a new seed, or else pick a random int
+        if seed is not None:
+            np.random.seed(seed)
+        else:
+            np.random.seed()
+        # Now regenerate all_positions here so that each reset gets new positions
+        all_positions = np.random.uniform(0, 100, size=(self.num_ue, 2)).astype(np.float32)
+        for i, ue in enumerate(self.ues):
+            ue.position = all_positions[i]
+        # 1) Reset step counter and clear all BS loads & UE state
+        
+        self.current_step = 0
+        for bs in self.base_stations:
+            bs.allocated_resources.clear()
+            bs.calculate_load()
+        for ue in self.ues:
+            ue.associated_bs = None
+            ue.sinr          = -np.inf
+            ue.ewma_dr       = 0.0
 
+        # 2) ONE-TIME metaheuristic warm start
+        if not self._has_warm_start and self.initial_assoc is not None:
+            for ue in self.ues:
+                bs_idx = self.initial_assoc[ue.id]
+                ue.associated_bs = bs_idx
+                dr = self.base_stations[bs_idx].data_rate_shared(ue)
+                self.base_stations[bs_idx].allocated_resources[ue.id] = dr
+            # Recompute each BS’s load once after all assignments
+            for bs in self.base_stations:
+                bs.calculate_load()
+
+            # Mark that warm start has been applied
+            self._has_warm_start = True
+            # Optionally clear to free memory
+            self.initial_assoc = None
+            # Reinitialize policy manager with reset positions
+        self._initialize_policy_manager()
+        
+        # 3) Build and return the obs + infos dicts
+        obs   = self._get_obs()  
+        infos = {f"ue_{i}": {} for i in range(self.num_ue)}
+        return obs, infos
+    
     # Add these to your NetworkEnvironment class
     def calculate_jains_fairness(self):
         throughputs = [ue.throughput for ue in self.ues]
@@ -1406,68 +1387,76 @@ class NetworkEnvironment(MultiAgentEnv):
 
             # 3) Update SINR & EWMA
             self._update_system_metrics()
-            # print(f"Connected Users : {connected_count} Users")
             # 4) Compute per-agent rewards
             rewards = {f"ue_{ue.id}": self.calculate_individual_reward(f"ue_{ue.id}")
-                    for ue in self.ues}
+                        for ue in self.ues}
             step_time = time.time() - start_time
-            # 4b) Compute aggregate metrics for logging
-            total_reward = sum(rewards.values())
-            # Connected ratio
-            connected_ratio = sum(1 for ue in self.ues if ue.associated_bs is not None) / self.num_ue
-
-            # Load‐balancing fairness (Jain) on normalized PRB loads
-            loads = np.array([bs.load for bs in self.base_stations], dtype=np.float32)
-            prb_caps = np.array([bs.num_rbs for bs in self.base_stations], dtype=np.float32)
-            util = loads / (prb_caps + 1e-9)
-            if util.sum() > 0:
-                jains = (util.sum()**2) / (len(util) * (util**2).sum() + 1e-9)
-            else:
-                jains = 0.0
-
-            # Current association solution
-            current_solution = [
-                ue.associated_bs if ue.associated_bs is not None else -1
-                for ue in self.ues
-            ]
-
-            # SINR list (capped at 100 dB for safety)
-            sinr_list = [
-                float(min(ue.sinr, 100.0)) if ue.associated_bs is not None else -np.inf
-                for ue in self.ues
-            ]
-
-            # Safe throughput sum (Gbps)
-            total_throughput = 0.0
-            for ue in self.ues:
-                if ue.associated_bs is not None:
-                    lin = min(ue.sinr, 100.0)
-                    total_throughput += np.log2(1 + 10**(lin/10))
-                    
-            # now total_throughput is in bits/s per Hz—if you want Gbps, multiply by your PRB_bw and num_prbs:self.rb_bandwidth 
-            total_throughput_gbps = total_throughput * 180e3 * len(self.base_stations[0].rb_allocation) / 1e9
-
-            # 4c) Log to KPI
-            if self.log_kpis and self.kpi_logger:
-                metrics = {
-                    "connected_ratio": connected_ratio,
-                    "step_time": step_time,
-                    "episode_reward_mean": total_reward / self.num_ue,
-                    "fairness_index": jains,
-                    "throughput_sum": total_throughput_gbps,
-                    "solution": current_solution,
-                    "sinr_list": sinr_list,
-                }
-                self.kpi_logger.log_metrics(
-                    phase="environment",
-                    algorithm="hybrid_marl",
-                    metrics=metrics,
-                    episode=self.current_step
-                )
-            # 5) Build infos, check termination
-            obs = self._get_obs()
+            
+             # 5) Decide termination/truncation
             terminated = {"__all__": False}
             truncated  = {"__all__": self.current_step >= self.episode_length}
+            
+            # print(f"Connected Users : {connected_count} Users")
+            if truncated["__all__"] or terminated["__all__"]:               
+                
+                # 4b) Compute aggregate metrics for logging
+                total_reward = sum(rewards.values())
+                # Connected ratio
+                connected_ratio = sum(1 for ue in self.ues if ue.associated_bs is not None) / self.num_ue
+
+                # Load‐balancing fairness (Jain) on normalized PRB loads
+                loads = np.array([bs.load for bs in self.base_stations], dtype=np.float32)
+                prb_caps = np.array([bs.num_rbs for bs in self.base_stations], dtype=np.float32)
+                util = loads / (prb_caps + 1e-9)
+                if util.sum() > 0:
+                    jains = (util.sum()**2) / (len(util) * (util**2).sum() + 1e-9)
+                else:
+                    jains = 0.0
+
+                # Current association solution
+                current_solution = [
+                    ue.associated_bs if ue.associated_bs is not None else -1
+                    for ue in self.ues
+                ]
+
+                # SINR list (capped at 100 dB for safety)
+                sinr_list = [
+                    float(min(ue.sinr, 100.0)) if ue.associated_bs is not None else -np.inf
+                    for ue in self.ues
+                ]
+
+                # Safe throughput sum (Gbps)
+                total_throughput = 0.0
+                for ue in self.ues:
+                    if ue.associated_bs is not None:
+                        lin = min(ue.sinr, 100.0)
+                        total_throughput += np.log2(1 + 10**(lin/10))
+                        
+                # now total_throughput is in bits/s per Hz—if you want Gbps, multiply by your PRB_bw and num_prbs:self.rb_bandwidth 
+                total_throughput_gbps = total_throughput * 180e3 * len(self.base_stations[0].rb_allocation) / 1e9
+
+                # 4c) Log to KPI
+                if self.log_kpis and self.kpi_logger:
+                    print("Updating Metrics per Episode in Step....")
+                    metrics = {
+                        "connected_ratio": connected_ratio,
+                        "step_time": step_time,
+                        "episode_reward_mean": total_reward / self.num_ue,
+                        "fairness_index": jains,
+                        "throughput_sum": total_throughput_gbps,
+                        "solution": current_solution,
+                        "sinr_list": sinr_list,
+                    }
+                    self.kpi_logger.log_metrics(
+                        phase="environment",
+                        algorithm="hybrid_marl",
+                        metrics=metrics,
+                        episode=self.episode_counter
+                    )
+                self.episode_counter += 1
+            # 5) Build infos, check termination
+            obs = self._get_obs()
+            
             # 1) Compute per-UE instantaneous throughput
             per_agent_info = {}
             for ue in self.ues:
@@ -1481,7 +1470,22 @@ class NetworkEnvironment(MultiAgentEnv):
                     "sinr_dB":              float(sinr_val),
                     "throughput_bps_per_hz": float(thr)
                 }
-
+            # 4b) Compute aggregate metrics for logging
+            total_reward = sum(rewards.values())
+            # Safe throughput sum (Gbps)
+            # Current association solution
+            current_solution = [
+                    ue.associated_bs if ue.associated_bs is not None else -1
+                    for ue in self.ues
+                ]
+            total_throughput = 0.0
+            for ue in self.ues:
+                if ue.associated_bs is not None:
+                    lin = min(ue.sinr, 100.0)
+                    total_throughput += np.log2(1 + 10**(lin/10))
+                        
+                # now total_throughput is in bits/s per Hz—if you want Gbps, multiply by your PRB_bw and num_prbs:self.rb_bandwidth 
+            total_throughput_gbps = total_throughput * 180e3 * len(self.base_stations[0].rb_allocation) / 1e9
             # 2) Compute global fairness (Jain’s index) on PRB utilization
             loads    = np.array([bs.load for bs in self.base_stations], dtype=np.float32)
             caps     = np.array([bs.num_rbs for bs in self.base_stations], dtype=np.float32) + 1e-9
@@ -1498,17 +1502,18 @@ class NetworkEnvironment(MultiAgentEnv):
                 "current_solution":     current_solution
             }
 
-            # Create info dict with one entry per agent, plus global info
-            info = {
-                f"ue_{ue.id}": {
-                    "connected":             ue.associated_bs is not None,
-                    "sinr_dB":               float(min(ue.sinr, 100.0)) if ue.associated_bs is not None else float("-inf"),
-                    "throughput_bps_per_hz": float(
-                        np.log2(1 + 10**(min(ue.sinr, 100.0) / 10))
-                    ) if ue.associated_bs is not None else 0.0
-                }
-                for ue in self.ues
-            }
+            # # Create info dict with one entry per agent, plus global info
+            # info = {
+            #     f"ue_{ue.id}": {
+            #         "connected":             ue.associated_bs is not None,
+            #         "sinr_dB":               float(min(ue.sinr, 100.0)) if ue.associated_bs is not None else float("-inf"),
+            #         "throughput_bps_per_hz": float(
+            #             np.log2(1 + 10**(min(ue.sinr, 100.0) / 10))
+            #         ) if ue.associated_bs is not None else 0.0
+            #     }
+            #     for ue in self.ues
+            # }
+            info = per_agent_info
             info["__common__"] = common_info
             self.current_step += 1
             # Update UE positions using MRWP mobility model
@@ -1594,11 +1599,11 @@ class NetworkEnvironment(MultiAgentEnv):
             obs_vector = np.concatenate([
                 norm_sinr,          # (num_bs,)
                 prb_fractions,      # (num_bs,)
-                util_bps,           # (num_bs,)
+                # util_bps,           # (num_bs,)
                 norm_demand,        # (1,)
-                one_hot,            # (num_bs+1,)
+                # one_hot,            # (num_bs+1,)
                 last_throughput,    # (1,)
-                np.array([global_jains], dtype=np.float32)  # (1,)
+                # np.array([global_jains], dtype=np.float32)  # (1,)
             ], axis=0)
 
             obs[f"ue_{ue.id}"] = obs_vector

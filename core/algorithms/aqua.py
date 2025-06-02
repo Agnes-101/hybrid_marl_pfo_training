@@ -3,7 +3,7 @@ import numpy as np
 from envs.custom_channel_env import NetworkEnvironment
 
 class AquilaOptimization:
-    def __init__(self, env: NetworkEnvironment, iterations=20,pop_size = 30, expansion_factor = 2.0, spiral_density = 0.1,kpi_logger=None):
+    def __init__(self, env: NetworkEnvironment, iterations=20,pop_size = 40, expansion_factor = 1.0, spiral_density = 0.1,kpi_logger=None):
         """Aquila Optimizer with four hunting strategies"""
         self.env = env
         self.num_ue = env.num_ue
@@ -57,7 +57,7 @@ class AquilaOptimization:
                     algorithm="aquila",
                     metrics=current_best_metrics
                 )
-            
+                print(f"AQUA Iter {iteration}: Best Fitness = {self.best_fitness:.4f}")
             if visualize_callback:
                 viz_metrics = {
                     "fitness": current_best_metrics["fitness"],

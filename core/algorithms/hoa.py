@@ -2,8 +2,8 @@ import numpy as np
 from envs.custom_channel_env import NetworkEnvironment
 
 class HippoOptimization:
-    def __init__(self, env: NetworkEnvironment,iterations=20,pod_size = 30,aggression_rate = 0.3,social_factor = 0.6,
-                yawn_impact = 0.4,territorial_decay = 0.9,kpi_logger=None):
+    def __init__(self, env: NetworkEnvironment,iterations=20,pod_size = 30,aggression_rate = 0.5,social_factor = 0.6,
+                yawn_impact = 0.8,territorial_decay = 0.9,kpi_logger=None):
         """Hippopotamus Optimization Algorithm for 6G load balancing"""
         self.env = env
         self.pod_size = pod_size          # Population size

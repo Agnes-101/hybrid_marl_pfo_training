@@ -488,7 +488,7 @@ import copy
 
 class PolarFoxOptimization:
     def __init__(self, env: NetworkEnvironment, iterations=20, population_size=60,
-                mutation_factor=0.2, group_types: list[list[float]] | None = None, kpi_logger=None):
+                mutation_factor=0.4, group_types: list[list[float]] | None = None, kpi_logger=None):
         self.env = env
         self.num_users = env.num_ue
         self.num_cells = env.num_bs
@@ -509,7 +509,7 @@ class PolarFoxOptimization:
             ])
         else:
             self.types = np.array(group_types, dtype=float)
-        
+                    
         # PFOA CORE: Initialize population with group structures
         self.population = []
         counts = np.floor(0.25 * np.ones(4) * population_size).astype(int)
@@ -530,9 +530,9 @@ class PolarFoxOptimization:
         self.best_solution = None
         self.best_fitness = -np.inf
         self.stagnation_count = 0
-        self.executor = ThreadPoolExecutor(max_workers=4)
+        self.executor = ThreadPoolExecutor(max_workers=4)      
         
-    
+                
     def compute_fitness_batch(self, solutions):
         results = []
         def evaluate_with_env_copy(solution):
@@ -871,7 +871,7 @@ class PolarFoxOptimization:
         """PFOA-aligned optimization loop with original logging structure"""
         # Capture initial state
         print(">>> ENTERING PFO.RUN()")
-        original_state = self.env.get_state_snapshot()
+        # original_state = self.env.get_state_snapshot()
         historical_bests = []
         diversity_history = []
         stagnation_threshold = 50  # PFOA's stagnation threshold
@@ -954,14 +954,16 @@ class PolarFoxOptimization:
                 visualize_callback(viz_metrics, self.best_solution)
 
         # --- Finalization ---
-        self.env.set_state_snapshot(original_state)
+        # self.env.set_state_snapshot(original_state)
         self.env.apply_solution(self.best_solution)
         
         # Prepare final metrics
         best_iter_metrics = self.env.evaluate_detailed_solution(self.best_solution)
         
         # # Calculate agent positions for visualization
-        # self._calculate_visual_positions()
+        # # self._calculate_visual_positions()
+        # for ue in self.env.num_ue:
+        #     ue.update_position()
         
         return {
             "solution": self.best_solution,

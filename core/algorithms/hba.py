@@ -2,8 +2,8 @@
 # from envs.custom_channel_env import NetworkEnvironment
 
 # class HBAOptimization:
-#     def __init__(self, env: NetworkEnvironment,iterations=20,badgers = 30,intensity = 0.9,density_factor = 1.0,
-#                 honey_prob = 0.5,kpi_logger=None):
+#     def __init__(self, env: NetworkEnvironment,iterations=20,badgers = 20,intensity = 0.6,density_factor = 0.8,
+#                 honey_prob = 0.8,kpi_logger=None):
 #         """Honey Badger Algorithm for 6G user association optimization"""
 #         self.env = env
 #         self.badgers = badgers      # Population size
@@ -270,7 +270,7 @@ class HBAOptimization:
                     algorithm="hba",
                     metrics=current_metrics
                 )
-
+                print(f"HBA Iter {iteration}: Best Fitness = {best_fitness:.4f}")
             # Visualization
             if visualize_callback:
                 viz = {
