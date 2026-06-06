@@ -1,5 +1,5 @@
 import numpy as np
-from core.envs.custom_channel_env import NetworkEnvironment
+from src.envs.custom_channel_env import NetworkEnvironment
 
 class RSAOptimization:
     def __init__(self, env: NetworkEnvironment, iterations=20, reptiles = 30, alpha = 0.1,beta = 1.5,hunting_prob = 0.7,kpi_logger=None):

@@ -10,23 +10,23 @@ from typing import Dict, Type, Callable
 from tqdm import tqdm
 import time
 import pandas as pd
-from core.envs.custom_channel_env import NetworkEnvironment
+from src.envs.custom_channel_env import NetworkEnvironment
 from functools import partial
-from core.algorithms.coa import COAOptimization
-from core.algorithms.co import CheetahOptimization
-from core.algorithms.do import DandelionOptimization
-from core.algorithms.gto import GTOOptimization
-from core.algorithms.hba import HBAOptimization
-from core.algorithms.rsa import RSAOptimization
-from core.algorithms.sto import STOOptimization
-from core.algorithms.poa import PelicanOptimization
-from core.algorithms.hoa import HippoOptimization
-from core.algorithms.fla import FLAOptimization
-from core.algorithms.rime import RIMEOptimization
-from core.algorithms.avoa import AVOAOptimization
-from core.algorithms.aqua import AquilaOptimization
-from core.algorithms.pfo import PolarFoxOptimization
-from core.algorithms.roa import RainbowOptimization
+from src.algorithms.coa import COAOptimization
+from src.algorithms.co import CheetahOptimization
+from src.algorithms.do import DandelionOptimization
+from src.algorithms.gto import GTOOptimization
+from src.algorithms.hba import HBAOptimization
+from src.algorithms.rsa import RSAOptimization
+from src.algorithms.sto import STOOptimization
+from src.algorithms.poa import PelicanOptimization
+from src.algorithms.hoa import HippoOptimization
+from src.algorithms.fla import FLAOptimization
+from src.algorithms.rime import RIMEOptimization
+from src.algorithms.avoa import AVOAOptimization
+from src.algorithms.aqua import AquilaOptimization
+from src.algorithms.pfo import PolarFoxOptimization
+from src.algorithms.roa import RainbowOptimization
 
 import optuna
 from optuna.samplers import TPESampler

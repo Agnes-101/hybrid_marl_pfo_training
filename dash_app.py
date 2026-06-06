@@ -19,9 +19,9 @@ import time
 import numpy as np
 
 # Import your custom modules
-from core.envs.custom_channel_env import NetworkEnvironment
-from core.hybrid_trainer.metaheuristic_opt import run_metaheuristic
-from core.hybrid_trainer.kpi_logger import WebKPILogger
+from src.envs.custom_channel_env import NetworkEnvironment
+from src.optimization.metaheuristic_opt import run_metaheuristic
+from src.utils.kpi_logger import WebKPILogger
 
 app = dash.Dash(__name__)
 

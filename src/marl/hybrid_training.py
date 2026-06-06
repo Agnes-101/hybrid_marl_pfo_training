@@ -9,7 +9,7 @@ print(f"Verified Project Root: {project_root}")  # Should NOT be "/"
 
 # ENVIRONMENT REGISTRATION MUST be outside class definition
 from ray.tune.registry import register_env
-from core.envs.custom_channel_env import NetworkEnvironment, PolicyMappingManager
+from src.envs.custom_channel_env import NetworkEnvironment, PolicyMappingManager
 
 def env_creator(env_config):
     return NetworkEnvironment(env_config)
@@ -31,11 +31,11 @@ from ray.rllib.models import ModelCatalog
 from typing import Dict
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.algorithms.ppo import PPO
-from core.analysis.comparison import MetricAnimator
-from core.hybrid_trainer.metaheuristic_opt import run_metaheuristic
-from core.hybrid_trainer.kpi_logger import KPITracker
-from core.hybrid_trainer.live_dashboard import LiveDashboard
-from ray.rllib.core.rl_module.rl_module import RLModule
+from src.analysis.comparison import MetricAnimator
+from src.optimization.metaheuristic_opt import run_metaheuristic
+from src.utils.kpi_logger import KPITracker
+from src.utils.live_dashboard import LiveDashboard
+# from ray.rllib.src.rl_module.rl_module import RLModule
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 import torch.nn as nn
 import gymnasium as gym
@@ -284,7 +284,7 @@ class HybridTraining:
                         print(f"Python path: {sys.path}")
                         
                         # Import required modules
-                        from core.envs.custom_channel_env import NetworkEnvironment
+                        from src.envs.custom_channel_env import NetworkEnvironment
                         print("✅ Successfully imported NetworkEnvironment")
                         return True
                     except ImportError as e:
@@ -307,13 +307,13 @@ class HybridTraining:
         
         # Import NetworkEnvironment - handle both direct import and delayed import
         try:
-            from core.envs.custom_channel_env import NetworkEnvironment
+            from src.envs.custom_channel_env import NetworkEnvironment
             self.env = NetworkEnvironment(config["env_config"])
         except ImportError:
             # Dynamic import as fallback
             import importlib
             try:
-                module = importlib.import_module("core.envs.custom_channel_env")
+                module = importlib.import_module("src.envs.custom_channel_env")
                 NetworkEnvironment = getattr(module, "NetworkEnvironment")
                 self.env = NetworkEnvironment(config["env_config"])
             except Exception as e:

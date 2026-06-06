@@ -14,9 +14,9 @@ if project_root not in sys.path:
     print(f"Added project root to PYTHONPATH: {project_root}")
 
 # Import your environment and other dependencies
-from core.envs.custom_channel_env import NetworkEnvironment
-from core.hybrid_trainer.kpi_logger import KPITracker
-from core.hybrid_trainer.hybrid_training import HybridTraining
+from src.envs.custom_channel_env import NetworkEnvironment
+from src.utils.kpi_logger import KPITracker
+from src.marl.hybrid_training import HybridTraining
 
 # Register environment with Ray
 def _register_environment():
@@ -107,8 +107,8 @@ def run_marl(
                 import os, sys
                 print(f"Current working directory: {os.getcwd()}")
                 print(f"Python path: {sys.path}")
-                from core.envs.custom_channel_env import NetworkEnvironment
-                from core.hybrid_trainer.hybrid_training import HybridTraining
+                from src.envs.custom_channel_env import NetworkEnvironment
+                from src.marl.hybrid_training import HybridTraining
                 print("✅ Successfully imported required modules!")
                 return True
             except ImportError as e:

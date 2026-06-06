@@ -11,7 +11,7 @@ import gymnasium as gym
 from ray.rllib.env import EnvContext
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from typing import Dict, List
-from hybrid_trainer.kpi_logger import KPITracker  # Import the KPI logger
+from utils.kpi_logger import KPITracker  # Import the KPI logger
 import time
 import math
 import numpy as np

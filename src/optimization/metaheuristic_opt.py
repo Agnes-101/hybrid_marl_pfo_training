@@ -7,42 +7,42 @@ sys.path.insert(0, project_root) if project_root not in sys.path else None
 
 import numpy as np
 from typing import Dict, Any
-from core.envs.custom_channel_env import NetworkEnvironment
-from core.hybrid_trainer.kpi_logger import KPITracker
+from src.envs.custom_channel_env import NetworkEnvironment
+from src.utils.kpi_logger import KPITracker
 # from algorithms import aco, bat, cs, de, fa, ga, gwo, hs, ica, pfo, pso, sa, tabu, woa
 
 # Core Metaheuristic Algorithms
 
-from core.algorithms.coa import COAOptimization
-from core.algorithms.co import CheetahOptimization
-from core.algorithms.do import DandelionOptimization
-from core.algorithms.gto import GTOOptimization
-from core.algorithms.hba import HBAOptimization
-from core.algorithms.rsa import RSAOptimization
-from core.algorithms.sto import STOOptimization
-from core.algorithms.poa import PelicanOptimization
-from core.algorithms.hoa import HippoOptimization
-from core.algorithms.fla import FLAOptimization
-from core.algorithms.rime import RIMEOptimization
-from core.algorithms.avoa import AVOAOptimization
-from core.algorithms.aqua import AquilaOptimization
-from core.algorithms.pfo import PolarFoxOptimization
-from core.algorithms.roa import RainbowOptimization
+from src.algorithms.coa import COAOptimization
+from src.algorithms.co import CheetahOptimization
+from src.algorithms.do import DandelionOptimization
+from src.algorithms.gto import GTOOptimization
+from src.algorithms.hba import HBAOptimization
+from src.algorithms.rsa import RSAOptimization
+from src.algorithms.sto import STOOptimization
+from src.algorithms.poa import PelicanOptimization
+from src.algorithms.hoa import HippoOptimization
+from src.algorithms.fla import FLAOptimization
+from src.algorithms.rime import RIMEOptimization
+from src.algorithms.avoa import AVOAOptimization
+from src.algorithms.aqua import AquilaOptimization
+from src.algorithms.pfo import PolarFoxOptimization
+from src.algorithms.roa import RainbowOptimization
 
-# from core.algorithms.old.aco import ACOOptimization
-# from core.algorithms.old.bat import BatOptimization
-# from core.algorithms.old.cs import CSOptimization
-# from core.algorithms.old.de import DEOptimization
-# from core.algorithms.old.fa import FireflyOptimization
-# from core.algorithms.old.ga import GAOptimization
-# from core.algorithms.old.gwo import GWOOptimization
-# from core.algorithms.old.hs import HarmonySearchOptimization
-# from core.algorithms.old.ica import ICAOptimization
-# from core.algorithms.pfo import PolarFoxOptimization
-# from core.algorithms.old.pso import PSOOptimization
-# from core.algorithms.old.sa import SAOptimization
-# from core.algorithms.old.tabu import TabuSearchOptimization
-# from core.algorithms.old.woa import WOAOptimization
+# from src.algorithms.old.aco import ACOOptimization
+# from src.algorithms.old.bat import BatOptimization
+# from src.algorithms.old.cs import CSOptimization
+# from src.algorithms.old.de import DEOptimization
+# from src.algorithms.old.fa import FireflyOptimization
+# from src.algorithms.old.ga import GAOptimization
+# from src.algorithms.old.gwo import GWOOptimization
+# from src.algorithms.old.hs import HarmonySearchOptimization
+# from src.algorithms.old.ica import ICAOptimization
+# from src.algorithms.pfo import PolarFoxOptimization
+# from src.algorithms.old.pso import PSOOptimization
+# from src.algorithms.old.sa import SAOptimization
+# from src.algorithms.old.tabu import TabuSearchOptimization
+# from src.algorithms.old.woa import WOAOptimization
 
 from functools import partial
 import json  # For serialize_result (add this)

@@ -11,7 +11,7 @@ import numpy as np
 import time
 # hybrid_trainer/kpi_logger.py
 import json
-from celery import current_task
+# from celery import current_task
 from typing import Optional
 import torch
 

@@ -1,5 +1,5 @@
 # Ignore virtual environment
-venv/
+.venv/
 
 # Ignore Python cache files
 __pycache__/
@@ -12,11 +12,17 @@ results/
 
 # Ignore Jupyter notebooks checkpoints (if any)
 .ipynb_checkpoints/
+src/algorithms/old
 
 # VS Code settings (optional)
 .vscode/
-
+*.lnk
 # OS generated files
 .DS_Store
 Thumbs.db
 
+bc_pretrained_checkpoint/
+algorithm_state.pkl
+policy_state.pkl
+rllib_checkpoint.json
+bc_partial.pkl

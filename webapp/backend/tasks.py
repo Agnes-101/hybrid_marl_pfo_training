@@ -1,7 +1,7 @@
 from celery import Celery
-from core.hybrid_trainer.metaheuristic_opt import run_metaheuristic, serialize_result
-from core.envs.custom_channel_env import NetworkEnvironment
-from core. hybrid_trainer.kpi_logger import WebKPILogger
+from src.optimization.metaheuristic_opt import run_metaheuristic, serialize_result
+from src.envs.custom_channel_env import NetworkEnvironment
+from src. utils.kpi_logger import WebKPILogger
 import numpy as np
 import os
 import redis
