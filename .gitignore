@@ -8,6 +8,7 @@ __pycache__/
 
 # Ignore results and logs
 results/
+archive/
 *.log
 
 # Ignore Jupyter notebooks checkpoints (if any)

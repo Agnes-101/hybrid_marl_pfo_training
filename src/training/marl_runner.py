@@ -110,10 +110,10 @@ def run_marl(
                 print(f"Python path: {sys.path}")
                 from src.envs.custom_channel_env import NetworkEnvironment
                 from src.training.hybrid_training import HybridTraining
-                print("✅ Successfully imported required modules!")
+                print("Successfully imported required modules!")
                 return True
             except ImportError as e:
-                print(f"❌ Import failed: {e}")
+                print(f"Import failed: {e}")
                 return False
         
         if not ray.get(verify_imports.remote()):
