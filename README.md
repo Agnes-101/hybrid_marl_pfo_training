@@ -68,14 +68,15 @@ flowchart TD
     C[MAPPO Training]
     D[Final Policy]
     E[KPI Monitoring & Evaluation]
-    F[Adaptive Retuning]
+    <!-- F[Adaptive Retuning-Optional] -->
+    
 
     A -->|Generate UE-BS association solutions| B
     B -->|Initialize policy network weights| C
     C -->|Fine-tune through environment interaction| D
     D -->|Evaluate performance| E
-    E -->|Performance stagnation detected| F
-    F -->|Reinitialize optimization cycle| A
+    <!-- E -->|Performance stagnation detected| F -->
+    <!-- F -->|Reinitialize optimization cycle| A -->
 ```
 
 ## Technologies Used
