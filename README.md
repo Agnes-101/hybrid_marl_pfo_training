@@ -63,8 +63,8 @@ This layout below illustrates the hybrid training structure of the implemented f
 ```mermaid
 flowchart TD
 
-    A[Polar Fox Optimization (PFO)]
-    B[Behavior Cloning (BC)]
+    A[Polar Fox Optimization-PFO]
+    B[Behavior Cloning-BC]
     C[MAPPO Training]
     D[Final Policy]
     E[KPI Monitoring & Evaluation]
