@@ -255,11 +255,9 @@ Parameters include:
 Potential extensions include:
 
 - RLModule migration for newer RLlib APIs,
-- Transformer-based MARL policies,
+- Hierarchical reinforcement learning architectures that separate network-wide optimization from local user association decisions.
 - Dynamic spectrum sharing,
 - Energy-efficient optimization,
-- Federated multi-agent learning,
-
 
 ---
 
