@@ -1,6 +1,8 @@
 import sys
 import os
 
+from networkx import display
+
 # Configure project root
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, project_root) if project_root not in sys.path else None
@@ -8,7 +10,7 @@ sys.path.insert(0, project_root) if project_root not in sys.path else None
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import pandas as pd
-# from IPython.display import HTML, display
+from IPython.display import HTML, display
 import numpy as np
 import time
 import uuid

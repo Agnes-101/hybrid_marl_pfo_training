@@ -16,7 +16,8 @@ if project_root not in sys.path:
 # Import your environment and other dependencies
 from src.envs.custom_channel_env import NetworkEnvironment
 from src.utils.kpi_logger import KPITracker
-from src.marl.hybrid_training import HybridTraining
+from src.training.hybrid_training import HybridTraining
+from src.training.phases.marl_phase import execute_baseline_marl, execute_marl_phase
 
 # Register environment with Ray
 def _register_environment():
@@ -108,7 +109,7 @@ def run_marl(
                 print(f"Current working directory: {os.getcwd()}")
                 print(f"Python path: {sys.path}")
                 from src.envs.custom_channel_env import NetworkEnvironment
-                from src.marl.hybrid_training import HybridTraining
+                from src.training.hybrid_training import HybridTraining
                 print("✅ Successfully imported required modules!")
                 return True
             except ImportError as e:
@@ -139,7 +140,9 @@ def run_marl(
         try:
             # Run exactly marl_steps_per_epoch PPO iterations
             print("→ about to run marl phase", epoch)
-            analysis = hybrid._execute_marl_phase(initial_policy=policy)
+            analysis = execute_marl_phase(config=hybrid_config, marl_algo=hybrid.marl_algo,
+                                           obs_space=hybrid.obs_space, act_space=hybrid.act_space,
+                                         kpi_logger=hybrid.kpi_logger, current_epoch=epoch)
             # analysis = hybrid._execute_marl_phase_direct(initial_policy=policy)
             print("← returned from marl phase", epoch)
             # Extract metrics with error handling

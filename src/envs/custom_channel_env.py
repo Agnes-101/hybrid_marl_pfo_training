@@ -18,9 +18,9 @@ import numpy as np
 
 from envs.entities.ue import UE
 from envs.entities.base_station import BaseStation
-from envs.policy_manager import PolicyMappingManager
+from src.envs.association_manager import AssociationMappingManager
 from envs.geometry.topology import generate_hex_positions
-from envs.state.snapshot import get_state_snapshot, set_state_snapshot
+from envs.env_state.snapshot import get_state_snapshot, set_state_snapshot
 from envs.kpi_metrics import *
     
 class NetworkEnvironment(MultiAgentEnv):       
@@ -176,20 +176,20 @@ class NetworkEnvironment(MultiAgentEnv):
             initial_ue_positions[agent_id] = np.array(ue.position)
         
         # Create policy manager
-        self.policy_manager = PolicyMappingManager(bs_positions, initial_ue_positions)
+        self.policy_manager = AssociationMappingManager(bs_positions, initial_ue_positions)
         
-        print(f"Policy manager initialized with {len(bs_positions)} BSs and {len(initial_ue_positions)} UEs")
+        # print(f"Policy manager initialized with {len(bs_positions)} BSs and {len(initial_ue_positions)} UEs")
         # print("Initial policy distribution:")
-        self.policy_manager.log_policy_assignments()
+        self.policy_manager.log_association_assignments()
         
     def get_policy_for_agent(self, agent_id: str) -> str:
         """Get the policy name for a given agent based on current position"""
         closest_bs = self.policy_manager.get_closest_bs(agent_id)
         return f"bs_{closest_bs}_policy"
     
-    def get_policy_distribution(self) -> Dict[str, int]:
+    def get_association_distribution(self) -> Dict[str, int]:
         """Get current policy distribution across all UEs"""
-        return self.policy_manager.get_policy_distribution()
+        return self.policy_manager.get_association_distribution()
     
         
     
@@ -363,6 +363,7 @@ class NetworkEnvironment(MultiAgentEnv):
             self._update_system_metrics()
             # 4) Compute per-agent rewards
             rewards = self._step_compute_rewards()
+            # print(f"Rewards type immediately: {type(rewards)}")
 
             step_time = time.time() - start_time
             
@@ -371,21 +372,23 @@ class NetworkEnvironment(MultiAgentEnv):
             
             # print(f"Connected Users : {connected_count} Users")
             if truncated["__all__"] or terminated["__all__"]:               
-                self._step_log_kpis(step_time, rewards)             
+                self._step_log_kpis(rewards, step_time)             
                 self.episode_counter += 1
+                # print(f"Reward type at episode end: {type(rewards)}")
 
             # 5) Build infos, check termination
             obs = self._get_obs()             
             per_agent_info = self._step_build_per_agent_info()
             
             # 3) Assemble common (__all__) info
+            # print(f"Rewards type before common info: {type(rewards)}")
             common_info = self._step_compute_common_metrics(rewards, step_time)
             diagnostics = self._step_build_overall_diagnostics()
+            common_info["diagnostics"] = diagnostics
             # # Create info dict with one entry per agent, plus global info
             
             info = per_agent_info
             info["__common__"] = common_info
-            info["__diagnostics__"] = diagnostics
             self.current_step += 1
             
             self._step_update_mobility()      
@@ -500,7 +503,9 @@ class NetworkEnvironment(MultiAgentEnv):
             new_positions[agent_id] = np.array(ue.position)
         self.policy_manager.update_ue_positions(new_positions)
     
-    def _step_log_kpis(self, step_time,metrics):
+    def _step_log_kpis(self, rewards, step_time):
+        # print(type(rewards))
+        # print(rewards)
         compute_metrics = self._step_compute_common_metrics(rewards, step_time)
         compute_diagnostics = self._step_build_overall_diagnostics()
         if not (self.log_kpis and self.kpi_logger):
@@ -508,7 +513,7 @@ class NetworkEnvironment(MultiAgentEnv):
 
         # 4c) Log to KPI
         if self.log_kpis and self.kpi_logger:
-            print("Updating Metrics per Episode in Step....")
+            # print("Updating Metrics per Episode in Step....")
             metrics = {
                     "connected_ratio": compute_metrics["connected_ratio"],
                     "step_time": step_time,
@@ -754,7 +759,7 @@ class NetworkEnvironment(MultiAgentEnv):
 
         return throughputs
     
-    def eval_compute_solution_metrics(self,throughputs):
+    def eval_compute_solution_metrics(self):
         fitness     = self.calculate_global_reward()          # global reward
         # 4) Throughputs per UE from actual shared allocations (bits/sec)
         throughputs = self.eval_get_ue_throughputs()
@@ -764,9 +769,9 @@ class NetworkEnvironment(MultiAgentEnv):
         sum_throughputs=throughputs_gbps.sum()
 
         ue_iter = (
-            env.ues.values()
-            if isinstance(env.ues, dict)
-            else env.ues
+            self.ues.values()
+            if isinstance(self.ues, dict)
+            else self.ues
         )
 
         avg_sinr = np.mean(
@@ -787,7 +792,7 @@ class NetworkEnvironment(MultiAgentEnv):
         )
 
         load_var = np.var(
-            [bs.load for bs in env.base_stations]
+            [bs.load for bs in self.base_stations]
         )
         bs_loads    = [bs.load for bs in self.base_stations
                        ]
@@ -824,39 +829,39 @@ class NetworkEnvironment(MultiAgentEnv):
 
     def eval_recompute_network_state(self):
         """Recompute all BS loads and UE SINRs based on current associations and allocations."""
-        for bs in env.base_stations:
+        for bs in self.base_stations:
             bs.calculate_load()
 
         ue_iter = (
-            env.ues.values()
-            if isinstance(env.ues, dict)
-            else env.ues
+            self.ues.values()
+            if isinstance(self.ues, dict)
+            else self.ues
         )
 
         for ue in ue_iter:
             if ue.associated_bs is not None:
                 sinr_vec = calculate_sinrs(
                     ue,
-                    env.base_stations
+                    self.base_stations
                 )
                 ue.sinr = sinr_vec[ue.associated_bs]
             else:
                 ue.sinr = -np.inf
 
         
-env = NetworkEnvironment({"num_ue": 3, "num_bs": 2})
-obs, _ = env.reset()
-print(obs["ue_0"].shape)  # Should be (2*2 + 1)=5
+# env = NetworkEnvironment({"num_ue": 3, "num_bs": 2})
+# obs, _ = env.reset()
+# print(obs["ue_0"].shape)  # Should be (2*2 + 1)=5
 
-actions = {"ue_0": 1, "ue_1": 0, "ue_2": 1}  # Each UE selects a BS index
-# next_obs, rewards, dones, _ = env.step(actions)
-next_obs, rewards, terminated, truncated, info = env.step(actions)
-print(next_obs, rewards, terminated, truncated, info)
-env1 = NetworkEnvironment({"num_ue": 10, "num_bs": 3})
-positions1 = [ue.position for ue in env1.ues]
+# actions = {"ue_0": 1, "ue_1": 0, "ue_2": 1}  # Each UE selects a BS index
+# # next_obs, rewards, dones, _ = env.step(actions)
+# next_obs, rewards, terminated, truncated, info = env.step(actions)
+# print(next_obs, rewards, terminated, truncated, info)
+# env1 = NetworkEnvironment({"num_ue": 10, "num_bs": 3})
+# positions1 = [ue.position for ue in env1.ues]
 
-env2 = NetworkEnvironment({"num_ue": 10, "num_bs": 3})
-positions2 = [ue.position for ue in env2.ues]
+# env2 = NetworkEnvironment({"num_ue": 10, "num_bs": 3})
+# positions2 = [ue.position for ue in env2.ues]
 
-assert np.allclose(positions1, positions2)  # Should pass
-print(np.allclose(positions1, positions2))  # Should print: True
+# assert np.allclose(positions1, positions2)  # Should pass
+# print(np.allclose(positions1, positions2))  # Should print: True

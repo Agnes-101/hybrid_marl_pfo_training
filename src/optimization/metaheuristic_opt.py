@@ -166,6 +166,7 @@ def run_metaheuristic(env: NetworkEnvironment, algorithm: str, epoch: int, kpi_l
     # )
     
     return {
+        'algorithm': algorithm,
         "solution": solution,
         "metrics": metrics
         

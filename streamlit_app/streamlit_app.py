@@ -39,7 +39,7 @@ sys.path.insert(0, project_root)
 from src.envs.custom_channel_env import NetworkEnvironment
 from src.optimization.metaheuristic_opt import run_metaheuristic
 from src.utils.kpi_logger import KPITracker
-from src.marl.marl_runner import run_marl
+from src.training.marl_runner import run_marl
 
 st.set_page_config(page_title="6G Metaheuristic & MARL Dashboard", layout="wide")
 st.title("6G Metaheuristic & MARL Dashboard")

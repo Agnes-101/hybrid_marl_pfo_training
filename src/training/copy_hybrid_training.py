@@ -9,7 +9,7 @@ print(f"Verified Project Root: {project_root}")  # Should NOT be "/"
 
 # ENVIRONMENT REGISTRATION MUST be outside class definition
 from ray.tune.registry import register_env
-from src.envs.custom_channel_env import NetworkEnvironment, PolicyMappingManager
+from src.envs.custom_channel_env import NetworkEnvironment, AssociationMappingManager
 
 def env_creator(env_config):
     return NetworkEnvironment(env_config)

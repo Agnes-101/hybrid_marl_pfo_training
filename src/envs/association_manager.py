@@ -7,7 +7,7 @@ sys.path.insert(0, project_root) if project_root not in sys.path else None
 from typing import Dict
 import numpy as np
 
-class PolicyMappingManager:
+class AssociationMappingManager:
     def __init__(self, bs_positions: np.ndarray, initial_ue_positions: Dict[str, np.ndarray]):
         """
         Initialize policy mapping manager
@@ -66,7 +66,7 @@ class PolicyMappingManager:
         
         return int(np.argmin(distances))
     
-    def get_policy_distribution(self) -> Dict[str, int]:
+    def get_association_distribution(self) -> Dict[str, int]:
         """Get count of UEs assigned to each policy"""
 
         distribution = {"bs_0_policy": 0, "bs_1_policy": 0, "bs_2_policy": 0, "bs_3_policy": 0}
@@ -78,14 +78,14 @@ class PolicyMappingManager:
             
         return distribution
     
-    def log_policy_assignments(self):
+    def log_association_assignments(self):
         """Log current policy assignments for debugging"""
         assignments = {}
         for agent_id in self.ue_positions.keys():
             closest_bs = self.get_closest_bs(agent_id)
             assignments[agent_id] = f"bs_{closest_bs}_policy"
         
-        distribution = self.get_policy_distribution()
+        distribution = self.get_association_distribution()
         # print(f"Policy distribution: {distribution}")
         return assignments
                     

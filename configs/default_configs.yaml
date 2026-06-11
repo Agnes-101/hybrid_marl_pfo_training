@@ -1,0 +1,78 @@
+# Default configuration for HybridTraining.
+#
+# Usage:
+#   from configs.config_loader import load_config
+#   config = load_config("configs/default_config.yaml")
+#   trainer = HybridTraining(config)
+#   trainer.run(mode="comparison")
+
+# Core configuration
+metaheuristic: pfo
+metaheuristic_comparison_mode: false   # if true, _get_initial_solution() compares all
+                         # algorithms in metaheuristic_algorithms and picks
+                         # the best by fitness
+metaheuristic_algorithms:
+  - pfo
+  - co
+  - coa
+  - do
+  - fla
+  - gto
+  - hba
+  - hoa
+  - avoa
+  - aqua
+  - poa
+  - rime
+  - roa
+  - rsa
+  - sto
+marl_algorithm: PPO
+
+# Environment parameters
+env_config:
+  num_bs: 1
+  num_ue: 10
+  episode_length: 10
+  log_kpis: true
+
+marl_steps_per_phase: 2
+max_epochs: 5
+checkpoint_interval: 5
+checkpointdir: ./checkpoints
+comparison_runs: 1   # Number of runs for statistical comparison (run_comparison_study)
+
+early_stopping:
+  enabled: true
+  min_iterations: 10
+  threshold: 0.01
+
+# Resource management
+ray_resources:
+  num_cpus: 8
+  num_gpus: 1
+
+marl_training:
+  num_gpus: 1   # GPUs allocated to MARL
+
+# Visualization parameters
+visualization:
+  3d_resolution: 20
+  heatmap_bins: 15
+
+# Adaptive control (hybrid loop only)
+adaptive_tuning:
+  enabled: false
+  stagnation_threshold: -50
+  stagnation_window: 10
+  # When true, retuning calls _get_initial_solution(allow_comparison=true),
+  # which respects comparison_mode (full algorithm comparison on retune).
+  # When false, retuning always uses a single metaheuristic run regardless
+  # of comparison_mode. Set this if comparing 15 algorithms on every retune
+  # is too expensive.
+  allow_comparison_on_retune: true
+
+# Logging
+logging:
+  enabled: true
+  log_dir: results/logs
