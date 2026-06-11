@@ -1,4 +1,4 @@
-# Hybrid MAPPO–Polar Fox Optimization for User Association and Load Balancing in 6G Networks
+# Hybrid MARL–Polar Fox Optimization for User Association and Load Balancing in telecommunication Networks
 
 This project introduces a hybrid artificial intelligence framework that combines Multi-Agent Reinforcement Learning(MAPPO) and Polar Fox Optimization (PFO) to optimize user association and load balancing in heterogeneous wireless networks.
 
@@ -15,10 +15,10 @@ However, traditional user association approaches often struggle under dynamic ne
 Under such conditions, conventional user association techniques, such as connecting users to the geographically nearest base station or the one with the strongest received signal strength, often result in imbalanced network utilization especially in tiered-deployment with varying base-station power.
 
 Some context for this can be:
-    > A large number of users clustering around a particular area, such as a stadium for watching the world cup, a concert or a shopping mall, casues the immediate nearby base stations to become overloaded while neighboring cells remain underutilized.
-    > Variations in traffic demand mean that some users require significantly more resources than others. Treating all users uniformly can result in unfair resource allocation and reduced user satisfaction.
-    > In heterogeneous networks comprising macro cells and small cells, users often associate with macro base stations because of stronger signal strength, even when nearby small cells have sufficient capacity and signal strength to serve them more efficiently.
-    > Users moving through the network may repeatedly switch between base stations, leading to frequent handovers, increased signaling overhead, and degraded Quality of Service (QoS).
+- A large number of users clustering around a particular area, such as a stadium for watching the world cup, a concert or a shopping mall, casues the immediate nearby base stations to become overloaded while neighboring cells remain underutilized.
+- Variations in traffic demand mean that some users require significantly more resources than others. Treating all users uniformly can result in unfair resource allocation and reduced user satisfaction.
+- In heterogeneous networks comprising macro cells and small cells, users often associate with macro base stations because of stronger signal strength, even when nearby small cells have sufficient capacity and signal strength to serve them more efficiently.
+- Users moving through the network may repeatedly switch between base stations, leading to frequent handovers, increased signaling overhead, and degraded Quality of Service (QoS).
     
 To this end, the key challenges to be addressed include:
 - Uneven traffic distribution,
@@ -60,28 +60,23 @@ This framework jointly optimizes user association and load balancing decisions w
 ## System Architecture
 This layout below illustrates the hybrid training structure of the implemented framework:
 
-PFO algorithm
-        │
-        │  produces association solutions (UE→BS mappings)
-        ▼
-BC (Behavior Cloning)
-        │
-        │  produces pretrained policy_network weights
-        ▼
-PPO (MARL)
-        │
-        │  fine-tunes from that starting point
-        ▼
-   final policy
-        │
-        │  final bs_ue assignment with overall best performance
-        ▼
-KPI Monitoring & Evaluation
-        │
-        │  through log outputs and streamlit dashboard
-        ▼
-     Adaptive Retuning (Optional)
----
+```mermaid
+flowchart TD
+
+    A[Polar Fox Optimization (PFO)]
+    B[Behavior Cloning (BC)]
+    C[MAPPO Training]
+    D[Final Policy]
+    E[KPI Monitoring & Evaluation]
+    F[Adaptive Retuning]
+
+    A -->|Generate UE-BS association solutions| B
+    B -->|Initialize policy network weights| C
+    C -->|Fine-tune through environment interaction| D
+    D -->|Evaluate performance| E
+    E -->|Performance stagnation detected| F
+    F -->|Reinitialize optimization cycle| A
+```
 
 ## Technologies Used
 
@@ -189,7 +184,7 @@ Results show that the proposed MARL-PFO framework opperates better in terms of s
 Clone the repository:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/hybrid_marl_pfo_training.git
+git clone https://github.com/Agnes-101/hybrid_marl_pfo_training.git
 cd hybrid_marl_pfo_training
 ```
 
