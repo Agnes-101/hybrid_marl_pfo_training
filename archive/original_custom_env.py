@@ -917,7 +917,7 @@ class NetworkEnvironment(MultiAgentEnv):
     def throughput(self):
         return torch.log2(1 + 10**(self.sinr/10)).item()
         
-    def calculate_reward(self):
+    def calculate_global_reward(self):
         """
         Normalized reward: Gbps throughput + fairness - overload_penalty.
         
@@ -1729,7 +1729,7 @@ class NetworkEnvironment(MultiAgentEnv):
         #         f"SINR={snr_db:.2f} dB, Rate={r_gbps:.3f} Gb/s")        
         ue_iter = self.ues.values() if isinstance(self.ues, dict) else self.ues
         # 5) Compute other metrics
-        fitness     = self.calculate_reward()          # global reward
+        fitness     = self.calculate_global_reward()          # global reward
         avg_sinr    = np.mean([ue.sinr for ue in ue_iter])
         fairness    = (throughputs.sum()**2) / (len(throughputs) * np.sum(throughputs**2) + 1e-9)
         load_var    = np.var([bs.load for bs in self.base_stations])
