@@ -77,7 +77,7 @@ flowchart TD
     D -->|Evaluate performance| E
     C -->|Performance stagnation detected - Optional| F
     F -->|Reinitialize optimization cycle| A
-
+```
 The framework combines the global search capability of Polar Fox Optimization with the adaptive learning capability of MAPPO. 
 
 PFO first discovers promising user-association solutions, which are used to initialize a policy through Behavior Cloning. 
