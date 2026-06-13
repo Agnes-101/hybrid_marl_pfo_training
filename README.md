@@ -83,7 +83,8 @@ The framework combines the global search capability of Polar Fox Optimization wi
 PFO first discovers promising user-association solutions, which are used to initialize a policy through Behavior Cloning. 
 MAPPO then refines this policy through interaction with the wireless network environment. 
 Network KPIs are continuously monitored, and an optional adaptive retuning mechanism can trigger re-optimization when performance degrades or stagnates.
-```
+
+---
 
 ## Technologies Used
 
